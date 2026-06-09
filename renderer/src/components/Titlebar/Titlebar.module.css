@@ -1,0 +1,300 @@
+/* VS Code-style title bar — flat, 3-zone (menu · command center · controls) */
+.titlebar {
+  height: var(--titlebar-height);
+  display: flex;
+  align-items: center;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  padding: 0;
+  /* Full bar is the drag region; interactive children opt out */
+  -webkit-app-region: drag;
+}
+
+/* All interactive children must opt out of dragging */
+.titlebar button,
+.menuBar,
+.commandWrap,
+.layoutControls,
+.winControls,
+.appIcon {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS: reserve space for traffic lights */
+.macSpacer {
+  width: 72px;
+  flex-shrink: 0;
+}
+
+/* App icon */
+.appIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 100%;
+  flex-shrink: 0;
+}
+.appIconImg {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+/* ── Menu bar ── */
+.menuBar {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  flex-shrink: 0;
+}
+.menuRoot {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+.menuBtn {
+  height: 100%;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  transition: background 0.1s;
+}
+.menuBtn:hover,
+.menuBtnActive {
+  background: var(--bg-app);
+}
+
+/* Dropdown menu (shared by menu bar + command center) */
+.menu,
+.commandMenu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 1000;
+  -webkit-app-region: no-drag;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 0.08s;
+  overflow: hidden;
+}
+.menuItem:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: var(--text-on-primary);
+}
+.menuItem:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.menuItemIcon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.menuItem:hover:not(:disabled) .menuItemIcon {
+  color: var(--text-on-primary);
+}
+.menuItemLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menuItemSub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+.menuItem:hover:not(:disabled) .menuItemSub {
+  color: rgba(255, 255, 255, 0.7);
+}
+.menuItemChecked .menuItemIcon {
+  color: var(--color-primary);
+}
+
+.menuLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 8px 3px;
+}
+.menuSep {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 4px;
+}
+.menuEmpty {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 6px 8px;
+}
+
+/* ── Drag region ── */
+.dragRegion {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+  min-width: 12px;
+}
+
+/* ── Command Center (center) ── */
+.commandWrap {
+  position: relative;
+  flex-shrink: 1;
+  display: flex;
+  justify-content: center;
+}
+.commandCenter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  min-width: 280px;
+  max-width: 420px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.commandCenter:hover {
+  background: var(--bg-elevated);
+  border-color: var(--text-tertiary);
+}
+.commandText {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+.commandName {
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commandEntry {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.commandHint {
+  color: var(--text-tertiary);
+}
+
+/* Command center popup anchored centered */
+.commandMenu {
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 320px;
+}
+
+/* Status dot inside command center */
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dotReady {
+  background: var(--color-success);
+}
+.dotRunning {
+  background: var(--color-success);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ── Layout controls (right) ── */
+.layoutControls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.iconBtn {
+  width: 30px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+}
+.iconBtn:hover {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+.iconBtnActive {
+  color: var(--color-primary);
+}
+
+/* ── Windows window controls ── */
+.winControls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  flex-shrink: 0;
+}
+.winBtn {
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: background 0.1s, color 0.1s;
+}
+.winBtn:hover {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+.closeBtn:hover {
+  background: var(--color-danger);
+  color: #fff;
+}

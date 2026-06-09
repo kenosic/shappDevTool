@@ -1,0 +1,76 @@
+appId: com.shapp.devtool
+productName: Shapp DevTool
+copyright: Copyright © 2026 Shapp
+
+directories:
+  buildResources: resources
+  output: dist-installer
+
+files:
+  - out/**/*
+
+extraResources:
+  - from: resources/deno
+    to: deno
+    filter:
+      - "**/*"
+  - from: resources/opencode
+    to: opencode
+    filter:
+      - "**/*"
+  - from: resources/deno-runner.ts
+    to: deno-runner.ts
+  - from: resources/logo.ico
+    to: logo.ico
+  - from: .github/skills
+    to: github-config/skills
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/logo.ico
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Shapp DevTool
+  installerIcon: resources/logo.ico
+  uninstallerIcon: resources/logo.ico
+  installerHeaderIcon: resources/logo.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: resources/logo.png
+  category: public.app-category.developer-tools
+  entitlementsInherit: resources/entitlements.mac.plist
+
+dmg:
+  title: Shapp DevTool ${version}
+  window:
+    width: 540
+    height: 380
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: resources/logo.png
+  category: Development
+
+publish:
+  provider: github
+  owner: shapp
+  repo: devtool
+  releaseType: draft

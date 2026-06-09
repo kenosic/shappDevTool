@@ -1,0 +1,47 @@
+.root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  position: relative;
+}
+
+.dragOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 122, 255, 0.15);
+  border: 3px dashed rgba(0, 122, 255, 0.5);
+  border-radius: 12px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.dragInvalid {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.dragHint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 28px 40px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.dragIcon {
+  font-size: 40px;
+}
+
+.dragText {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}

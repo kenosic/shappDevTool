@@ -1,0 +1,474 @@
+.root {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-app);
+}
+
+/* ── Toolbar ── */
+.toolbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.toolDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+/* Dropdowns */
+.select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.dimensionLabel {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+/* Frontend / Admin toggle */
+.segmented {
+  display: flex;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  padding: 2px;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.segBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+}
+.segBtnActive {
+  background: var(--bg-card);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+.segBtnAdminActive {
+  background: var(--bg-card);
+  color: #6366f1;
+  box-shadow: var(--shadow-sm);
+}
+
+/* URL bar */
+.urlBar {
+  flex: 1;
+  min-width: 120px;
+  max-width: 240px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--bg-app);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: left;
+  overflow: hidden;
+  transition: border-color 0.15s;
+  cursor: pointer;
+}
+.urlBar:hover { border-color: var(--border-color); color: var(--text-primary); }
+.urlBarCopied { border-color: var(--color-success) !important; color: var(--color-success) !important; }
+.urlText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copiedBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-success);
+  font-family: var(--font-sans);
+  flex-shrink: 0;
+}
+
+/* Action buttons */
+.toolBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+.toolBtn:hover:not(:disabled) { background: var(--bg-app); color: var(--text-primary); }
+.toolBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.toolBtnLabel { font-weight: 500; }
+
+.toolBtnRecording {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  animation: recPulse 1s ease-in-out infinite;
+}
+@keyframes recPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+/* Warnings */
+.warnings {
+  background: #fff8e7;
+  border-bottom: 1px solid #ffc107;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #856404;
+  flex-shrink: 0;
+}
+
+/* ── Preview outer (includes left strip) ── */
+.previewOuter {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Left vertical icon strip */
+.leftStrip {
+  width: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 4px;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.leftStripBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: background 0.1s, color 0.1s;
+}
+.leftStripBtn:hover { background: var(--bg-app); color: var(--text-primary); }
+.leftStripSep {
+  width: 20px;
+  height: 1px;
+  background: var(--border-color);
+  margin: 2px 0;
+}
+
+/* ── Preview area ── */
+.previewArea {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+  background: var(--bg-app);
+}
+
+.previewAreaDesktop {
+  align-items: stretch;
+  padding: 12px;
+}
+
+/* Desktop frame */
+.desktopFrame {
+  flex: 1;
+  align-self: stretch;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+  background: #fff;
+}
+
+/* Phone frame wrapper: clips to bezel size */
+.phoneFrameWrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* iPhone bezel */
+.phoneBezel {
+  position: relative;
+  border-radius: 48px;
+  background: #1d1d1f;
+  box-shadow:
+    inset 0 0 0 1.5px #3a3a3c,
+    inset 0 0 0 3px #2a2a2c,
+    0 24px 72px rgba(0,0,0,0.36),
+    0 8px 24px rgba(0,0,0,0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Dynamic Island — all size/position set via inline style (scaled with zoom) */
+.dynamicIsland {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000;
+  z-index: 20;
+  pointer-events: none;
+}
+
+/* Status bar: sits above the iframe (z-index overlap) — height set by inline style */
+.phoneStatus {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* height set via inline style (device.statusBarH * zoom) */
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 28px 8px;
+  z-index: 15;
+  pointer-events: none;
+  background: #000;
+  color: #fff;
+}
+
+.statusTime {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.statusIcons {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #fff;
+}
+
+/* Iframe container — positioned absolutely, size via inline style */
+.iframeWrapper {
+  position: absolute;
+  overflow: hidden;
+}
+
+.iframe {
+  border: none;
+  display: block;
+  background: #fff;
+}
+
+/* Home indicator / bottom safe area — height set by inline style */
+.homeIndicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  /* height set via inline style (device.safeBottom * zoom) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+  background: #000;
+}
+/* The pill inside home indicator */
+.homeIndicator::after {
+  content: "";
+  display: block;
+  width: 120px;
+  height: 5px;
+  background: rgba(255,255,255,0.4);
+  border-radius: 3px;
+}
+
+/* Admin mode badge */
+.adminBadge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: #6366f1;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  z-index: 25;
+  pointer-events: none;
+}
+
+/* Empty state */
+.empty {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+/* Device mode selector */
+.deviceSelect {
+  padding: 4px 8px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* URL bar (now a button for copy) */
+.urlBar {
+  flex: 1;
+  padding: 5px 10px;
+  background: var(--bg-app);
+  border-radius: var(--border-radius-sm);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.15s;
+}
+
+.urlBar:hover {
+  border-color: var(--color-primary);
+}
+
+.copied {
+  border-color: var(--color-success) !important;
+}
+
+.url {
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.placeholder {
+  color: var(--text-tertiary);
+}
+
+.copiedHint {
+  font-size: 11px;
+  color: var(--color-success);
+  font-family: var(--font-sans);
+  flex-shrink: 0;
+}
+
+.toolBtn {
+  padding: 5px 8px;
+  border-radius: var(--border-radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.toolBtn:hover:not(:disabled) {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.toolBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.recordingActive {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.previewArea {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+}
+
+.previewAreaDesktop {
+  align-items: stretch;
+  padding: 12px;
+}
+
+.phoneFrame {
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-color);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.desktopFrame {
+  align-self: stretch;
+  flex: 1;
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: 14px;
+}

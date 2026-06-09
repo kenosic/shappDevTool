@@ -1,0 +1,143 @@
+.toolbar {
+  height: 40px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.primaryBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.primaryBtn:hover {
+  background: var(--color-primary-hover);
+}
+
+.actionBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.runBtn {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--color-primary);
+}
+
+.runBtn:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.18);
+}
+
+.runBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stopBtn {
+  background: rgba(255, 59, 48, 0.1);
+  color: var(--color-danger);
+}
+
+.stopBtn:hover {
+  background: rgba(255, 59, 48, 0.18);
+}
+
+.iconBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.iconBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.urlBar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--bg-app);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.urlBar:hover {
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.urlBarCopied {
+  border-color: var(--color-success) !important;
+  color: var(--color-success) !important;
+}
+
+.urlText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.errorBadge {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-danger);
+}
+
+.badgeDot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  border: 1.5px solid var(--bg-card);
+}

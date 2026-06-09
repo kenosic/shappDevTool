@@ -1,0 +1,364 @@
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-behavior: smooth;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-tertiary);
+  padding: 24px;
+  text-align: center;
+}
+
+.emptyText {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Message bubbles */
+.messagePair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.userBubble {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 14px 14px 4px 14px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.assistantBubble {
+  align-self: flex-start;
+  width: 96%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px 14px 14px 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Markdown overrides inside assistant bubble */
+.assistantBubble p {
+  margin: 0 0 6px;
+}
+.assistantBubble p:last-child { margin-bottom: 0; }
+.assistantBubble pre {
+  margin: 6px 0;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.assistantBubble code {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+}
+.assistantBubble :not(pre) > code {
+  background: var(--bg-app);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+.assistantBubble ul, .assistantBubble ol {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+.assistantBubble h1, .assistantBubble h2, .assistantBubble h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 6px 0 2px;
+}
+.assistantBubble table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+  margin: 6px 0;
+}
+.assistantBubble th, .assistantBubble td {
+  border: 1px solid var(--border-color);
+  padding: 4px 8px;
+}
+.assistantBubble blockquote {
+  border-left: 3px solid var(--border-color);
+  margin: 4px 0;
+  padding-left: 10px;
+  color: var(--text-secondary);
+}
+
+/* Tool call card */
+.toolCard {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.toolHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-app);
+  cursor: pointer;
+  user-select: none;
+}
+.toolHeader:hover { background: var(--bg-sidebar); }
+
+.toolName {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.toolState {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(0,122,255,0.1);
+  color: var(--color-primary);
+}
+.toolStateDone {
+  background: rgba(52,199,89,0.1);
+  color: var(--color-success);
+}
+
+.toolBody {
+  padding: 8px 10px;
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border-color);
+}
+
+.toolArgs {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+/* Streaming cursor */
+.cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--color-primary);
+  border-radius: 1px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* System message */
+.systemMsg {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 4px 0;
+}
+
+/* ── Question tool card ─────────────────────────────────────────────────── */
+
+.questionCard {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.questionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  user-select: none;
+}
+
+.questionTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.questionStateRunning {
+  font-size: 10px;
+  color: var(--color-primary);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.questionStateDone {
+  font-size: 10px;
+  color: var(--color-success);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.questionStateStale {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.questionCardStale {
+  opacity: 0.65;
+}
+
+.questionOptionDisabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.questionBody {
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.questionItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.questionItemHeader {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.questionItemText {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.questionAnswerResult {
+  font-size: 12px;
+  color: var(--color-primary);
+  font-weight: 500;
+  padding: 4px 10px;
+  background: var(--bg-app);
+  border-left: 2px solid var(--color-primary);
+  border-radius: 0 4px 4px 0;
+  margin-top: 2px;
+}
+
+.questionOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.questionOption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 10px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+  width: 100%;
+}
+
+.questionOption:hover {
+  border-color: var(--color-primary);
+}
+
+.questionOptionSelected {
+  border-color: var(--color-primary);
+  background: var(--bg-sidebar);
+}
+
+.questionOptionLabel {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.questionOptionDesc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.questionCustom {
+  margin-top: 4px;
+}
+
+.questionCustomInput {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.questionCustomInput:focus {
+  border-color: var(--color-primary);
+}
+
+.questionCustomInput::placeholder {
+  color: var(--text-tertiary);
+}
+
+.questionSubmit {
+  align-self: flex-end;
+  padding: 5px 16px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: not-allowed;
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.questionSubmitActive {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+}
+
+.questionSubmitActive:hover {
+  opacity: 0.88;
+}

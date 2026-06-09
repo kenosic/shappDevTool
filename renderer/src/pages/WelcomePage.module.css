@@ -1,0 +1,297 @@
+.root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Drag-and-drop overlay ──────────────────────────────────────── */
+.dragOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 122, 255, 0.15);
+  border: 3px dashed rgba(0, 122, 255, 0.5);
+  border-radius: 12px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.dragInvalid {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.dragHint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 28px 40px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.dragIcon { font-size: 40px; }
+
+.dragText {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ── Titlebar ──────────────────────────────────────────────────── */
+.titlebar {
+  height: var(--titlebar-height);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.winControls {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.winBtn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+}
+
+.winBtn:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.closeBtn:hover {
+  background: rgba(255, 59, 48, 0.12);
+  color: var(--color-danger);
+}
+
+/* ── Header ────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.logoImage {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Error banner ──────────────────────────────────────────────── */
+.errorBanner {
+  padding: 7px 20px;
+  background: rgba(255, 59, 48, 0.08);
+  border-bottom: 1px solid rgba(255, 59, 48, 0.18);
+  color: var(--color-danger);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Body ──────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Left: open section ────────────────────────────────────────── */
+.openSection {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dropZone {
+  flex: 1;
+  border: 2px dashed var(--border-color);
+  border-radius: var(--border-radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 16px;
+  transition: border-color 0.15s;
+}
+
+.dropZone:hover {
+  border-color: var(--color-primary);
+}
+
+.dropZoneActive {
+  border-color: var(--color-primary);
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.dropZoneInvalid {
+  border-color: #ff3b30;
+  background: rgba(255, 59, 48, 0.06);
+}
+
+.dropIcon {
+  font-size: 30px;
+}
+
+.dropHint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.openBtn {
+  margin-top: 4px;
+  padding: 7px 20px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: var(--border-radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.openBtn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.openBtn:disabled {
+  opacity: 0.5;
+}
+
+/* ── Divider ───────────────────────────────────────────────────── */
+.divider {
+  width: 1px;
+  background: var(--border-color);
+  flex-shrink: 0;
+  margin: 16px 0;
+}
+
+/* ── Right: recent section ─────────────────────────────────────── */
+.recentSection {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.sectionLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.clearBtn {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.clearBtn:hover {
+  color: var(--color-danger);
+}
+
+.recentEmpty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.recentList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.recentItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--border-radius-sm);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.recentItem:hover:not(:disabled) {
+  background: var(--bg-card);
+}
+
+.recentItem:disabled {
+  opacity: 0.5;
+}
+
+.recentIcon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.recentPath {
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+

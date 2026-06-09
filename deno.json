@@ -1,0 +1,11 @@
+{
+  "tasks": {
+    "test": "deno test --allow-all tests/",
+    "test:runner": "deno test --allow-all tests/runner/"
+  },
+  "imports": {
+    "jsr:@std/assert": "jsr:@std/assert@^1.0.0",
+    "jsr:@std/path": "jsr:@std/path@^1.0.0",
+    "jsr:@db/sqlite": "jsr:@db/sqlite@^0.12"
+  }
+}
