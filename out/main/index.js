@@ -4,13 +4,16 @@ const electron = require("electron");
 const path = require("path");
 const os = require("os");
 const promises = require("fs/promises");
-const require$$0 = require("fs");
+const nodeFs = require("fs");
 const fflate = require("fflate");
-const require$$0$1 = require("child_process");
+const sharp = require("sharp");
+const require$$0 = require("child_process");
 const Database = require("better-sqlite3");
 const net = require("net");
 const url = require("url");
 const node_child_process = require("node:child_process");
+const crypto = require("crypto");
+const git = require("isomorphic-git");
 const http = require("http");
 const electronUpdater = require("electron-updater");
 const chokidar = require("chokidar");
@@ -32,10 +35,17 @@ function _interopNamespaceDefault(e) {
 }
 const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
+const nodeFs__namespace = /* @__PURE__ */ _interopNamespaceDefault(nodeFs);
+const git__namespace = /* @__PURE__ */ _interopNamespaceDefault(git);
 class HotReloader {
-  watcher = null;
-  appDir = null;
-  callbacks = null;
+  constructor() {
+    this.watcher = null;
+    this.appDir = null;
+    this.callbacks = null;
+    this.frontendTimer = null;
+    this.backendTimer = null;
+    this.DEBOUNCE_MS = 150;
+  }
   start(appDir, callbacks) {
     this.stop();
     this.appDir = appDir;
@@ -62,34 +72,43 @@ class HotReloader {
         pollInterval: 50
       }
     });
-    this.watcher.on("change", (path2) => {
+    const fireFrontend = () => {
+      if (this.frontendTimer) clearTimeout(this.frontendTimer);
+      this.frontendTimer = setTimeout(() => {
+        this.frontendTimer = null;
+        this.callbacks?.onFrontendChange();
+      }, this.DEBOUNCE_MS);
+    };
+    const fireBackend = () => {
+      if (this.backendTimer) clearTimeout(this.backendTimer);
+      this.backendTimer = setTimeout(() => {
+        this.backendTimer = null;
+        this.callbacks?.onBackendChange();
+      }, this.DEBOUNCE_MS);
+    };
+    const dispatch = (path2) => {
       const normalized = path2.replace(/\\/g, "/");
       if (normalized.endsWith("/manifest.json") || normalized.endsWith("/app.manifest.json")) {
         callbacks.onManifestChange?.();
       } else if (normalized.includes("/frontend/")) {
-        callbacks.onFrontendChange();
+        fireFrontend();
       } else if (normalized.includes("/backend/") || normalized.includes("/logic/")) {
-        callbacks.onBackendChange();
+        fireBackend();
       }
-    });
-    this.watcher.on("add", (path2) => {
-      const normalized = path2.replace(/\\/g, "/");
-      if (normalized.includes("/frontend/")) {
-        callbacks.onFrontendChange();
-      } else if (normalized.includes("/backend/") || normalized.includes("/logic/")) {
-        callbacks.onBackendChange();
-      }
-    });
-    this.watcher.on("unlink", (path2) => {
-      const normalized = path2.replace(/\\/g, "/");
-      if (normalized.includes("/frontend/")) {
-        callbacks.onFrontendChange();
-      } else if (normalized.includes("/backend/") || normalized.includes("/logic/")) {
-        callbacks.onBackendChange();
-      }
-    });
+    };
+    this.watcher.on("change", dispatch);
+    this.watcher.on("add", dispatch);
+    this.watcher.on("unlink", dispatch);
   }
   stop() {
+    if (this.frontendTimer) {
+      clearTimeout(this.frontendTimer);
+      this.frontendTimer = null;
+    }
+    if (this.backendTimer) {
+      clearTimeout(this.backendTimer);
+      this.backendTimer = null;
+    }
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
@@ -320,13 +339,20 @@ async function resolveEntries(dir, manifest) {
   }
   return result.length > 0 ? result : [backendEntry];
 }
+function isUninitializedDir(dir) {
+  const indicators = ["package.json", "frontend", "backend"];
+  for (const name of indicators) {
+    if (nodeFs.existsSync(path.join(dir, name))) return false;
+  }
+  return true;
+}
 async function loadFolderInternal(dirPath) {
   const found = await findManifest(dirPath);
   const resolvedDir = found?.resolvedDir ?? dirPath;
   const manifest = found?.manifest ?? {
     id: "",
     name: path.basename(dirPath),
-    version: "1.0.0",
+    version: electron.app.getVersion(),
     entry: {}
   };
   const entries = await resolveEntries(resolvedDir, manifest);
@@ -337,15 +363,26 @@ async function loadFolderInternal(dirPath) {
   const resolvedFrontendEntry = path.join(resolvedDir, frontendEntry);
   const frontendDir = path.extname(frontendEntry) ? path.dirname(resolvedFrontendEntry) : resolvedFrontendEntry;
   const warnings = [];
-  if (!found) {
+  const skipWarnings = !found && isUninitializedDir(resolvedDir);
+  if (!found && !skipWarnings) {
     warnings.push("未找到清单文件，请在左侧填写应用信息后保存，将自动创建 app.manifest.json");
   }
-  if (!require$$0.existsSync(frontendDir)) {
+  if (!nodeFs.existsSync(frontendDir) && !skipWarnings) {
     warnings.push(`前端目录 "${frontendEntry}" 不存在，上传到平台时将被拒绝`);
   }
-  if (manifest.engine === "cocos") {
-    const msg = checkCocosBundle(frontendDir, require$$0.existsSync);
+  if (manifest.engine === "cocos" && !skipWarnings) {
+    const msg = checkCocosBundle(frontendDir, nodeFs.existsSync);
     if (msg) warnings.push(msg);
+  }
+  if (found && !skipWarnings) {
+    if (!manifest.name?.trim()) warnings.push(`应用名称未设置，打包时将被拒绝`);
+    if (!manifest.version?.trim()) warnings.push(`版本号未设置，打包时将被拒绝`);
+    if (!manifest.description?.trim()) warnings.push(`应用描述未设置，打包时将被拒绝`);
+    if (!manifest.logo?.trim()) {
+      warnings.push(`应用图标未设置，打包时将被拒绝`);
+    } else if (!nodeFs.existsSync(path.join(resolvedDir, manifest.logo))) {
+      warnings.push(`应用图标文件 "${manifest.logo}" 不存在，打包时将被拒绝`);
+    }
   }
   return { dir: resolvedDir, frontendDir, manifest, entries, warnings };
 }
@@ -409,12 +446,28 @@ function registerPackageHandlers(win) {
   electron.ipcMain.handle("package:build", async (_e, appDir) => {
     const found = await findManifest(appDir);
     const manifest = found?.manifest;
+    const resolvedDir = found?.resolvedDir ?? appDir;
+    const missing = [];
+    if (!manifest?.name?.trim()) missing.push("应用名称");
+    if (!manifest?.version?.trim()) missing.push("版本号");
+    if (!manifest?.description?.trim()) missing.push("应用描述");
+    if (!manifest?.logo?.trim()) {
+      missing.push("应用图标");
+    } else if (!nodeFs.existsSync(path.join(resolvedDir, manifest.logo))) {
+      missing.push(`应用图标（文件 "${manifest.logo}" 不存在）`);
+    }
+    if (missing.length > 0) {
+      throw new Error(`打包前请先完善应用信息，以下必填项缺失：
+${missing.map((m) => `  · ${m}`).join("\n")}`);
+    }
     const appName = manifest?.name ?? path.basename(appDir);
-    const version = manifest?.version ?? "1.0.0";
+    const version = manifest?.version ?? electron.app.getVersion();
     const defaultName = `${appName}-${version}.zip`;
+    const distDir = path.join(appDir, "dist");
+    await promises.mkdir(distDir, { recursive: true });
     const { canceled, filePath } = await electron.dialog.showSaveDialog(win, {
       title: "保存应用压缩包",
-      defaultPath: path.join(appDir, defaultName),
+      defaultPath: path.join(distDir, defaultName),
       filters: [{ name: "ZIP Archive", extensions: ["zip"] }]
     });
     if (canceled || !filePath) return null;
@@ -426,7 +479,7 @@ function registerPackageHandlers(win) {
     const candidates = ["app.manifest.json", "manifest.json"];
     for (const name of candidates) {
       const filePath = path.join(dir, name);
-      if (require$$0.existsSync(filePath)) {
+      if (nodeFs.existsSync(filePath)) {
         await promises.writeFile(filePath, JSON.stringify(manifest, null, 2), "utf-8");
         return;
       }
@@ -460,7 +513,21 @@ function registerPackageHandlers(win) {
     if (!filePath.startsWith(path.normalize(appDir))) throw new Error("Path traversal not allowed");
     await promises.mkdir(path.dirname(filePath), { recursive: true });
     const base64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
-    await promises.writeFile(filePath, Buffer.from(base64, "base64"));
+    const inputBuffer = Buffer.from(base64, "base64");
+    const isLogo = path.basename(relPath).startsWith("logo");
+    const pipeline = sharp(inputBuffer);
+    if (isLogo) {
+      pipeline.resize(128, 128, { fit: "cover", position: "center" });
+    }
+    const webpBuffer = await pipeline.webp({ lossless: true }).toBuffer();
+    const webpPath = filePath.replace(/\.[^.]+$/, ".webp");
+    await promises.writeFile(webpPath, webpBuffer);
+    if (webpPath !== filePath) {
+      try {
+        await promises.unlink(filePath);
+      } catch {
+      }
+    }
   });
   electron.ipcMain.handle("package:listImages", async (_e, appDir, subPath) => {
     try {
@@ -501,6 +568,7 @@ function startWatcher(appDir, win) {
   hotReloader.start(appDir, {
     onFrontendChange: () => {
       win.webContents.send("package:hotReload", { type: "frontend" });
+      refreshWarnings(appDir, win);
     },
     onBackendChange: () => {
       win.webContents.send("package:hotReload", { type: "backend" });
@@ -509,10 +577,18 @@ function startWatcher(appDir, win) {
       try {
         const pkg = await loadFolderInternal(appDir);
         win.webContents.send("package:manifestReload", pkg.manifest);
+        win.webContents.send("package:warningsChanged", pkg.warnings);
       } catch {
       }
     }
   });
+}
+async function refreshWarnings(appDir, win) {
+  try {
+    const pkg = await loadFolderInternal(appDir);
+    win.webContents.send("package:warningsChanged", pkg.warnings);
+  } catch {
+  }
 }
 let currentProcess = null;
 let getServerUrl = null;
@@ -522,11 +598,15 @@ function setServerUrlGetter(fn) {
 function getDenoPath() {
   const platform = process.platform;
   const arch = process.arch;
+  const ext = platform === "win32" ? ".exe" : "";
+  const suffix = arch === "arm64" ? "arm64" : "x64";
   if (electron.app.isPackaged) {
     const resourcesDir = process.resourcesPath;
-    const ext = platform === "win32" ? ".exe" : "";
-    const suffix = arch === "arm64" ? "arm64" : "x64";
     return path.join(resourcesDir, "deno", `deno-${platform}-${suffix}${ext}`);
+  }
+  const localDenoPath = path.join(electron.app.getAppPath(), "resources", "deno", `deno-${platform}-${suffix}${ext}`);
+  if (nodeFs.existsSync(localDenoPath)) {
+    return localDenoPath;
   }
   return "deno";
 }
@@ -581,7 +661,7 @@ async function executeWithDeno(params, win) {
   const runnerScript = getRunnerScriptPath();
   const devtoolDir = await ensureDevtoolDir(params.appDir);
   const dbPath = path.join(devtoolDir, "state.db");
-  if (electron.app.isPackaged && !require$$0.existsSync(denoPath)) {
+  if (electron.app.isPackaged && !nodeFs.existsSync(denoPath)) {
     return {
       ok: false,
       error: {
@@ -602,7 +682,7 @@ async function executeWithDeno(params, win) {
       dbPath,
       serverUrl: getServerUrl?.() ?? null
     });
-    const childProc = require$$0$1.spawn(
+    const childProc = require$$0.spawn(
       denoPath,
       ["run", "--allow-all", "--no-check", runnerScript],
       {
@@ -705,7 +785,7 @@ function openDb(dbPath) {
 }
 function registerKvHandlers() {
   electron.ipcMain.handle("kv:getTables", (_e, dbPath) => {
-    if (!require$$0.existsSync(dbPath)) return [];
+    if (!nodeFs.existsSync(dbPath)) return [];
     try {
       const db = openDb(dbPath);
       const rows = db.prepare(
@@ -720,7 +800,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:getTableRows",
     (_e, dbPath, table, limit = 100, offset = 0) => {
-      if (!require$$0.existsSync(dbPath)) return { rows: [], total: 0 };
+      if (!nodeFs.existsSync(dbPath)) return { rows: [], total: 0 };
       try {
         const db = openDb(dbPath);
         const tables = db.prepare(
@@ -745,7 +825,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:runQuery",
     (_e, dbPath, sql) => {
-      if (!require$$0.existsSync(dbPath)) return { columns: [], rows: [] };
+      if (!nodeFs.existsSync(dbPath)) return { columns: [], rows: [] };
       try {
         const db = openDb(dbPath);
         const stmt = db.prepare(sql);
@@ -772,14 +852,14 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:exportDb",
     async (_e, dbPath) => {
-      if (!require$$0.existsSync(dbPath)) return null;
+      if (!nodeFs.existsSync(dbPath)) return null;
       const result = await electron.dialog.showSaveDialog({
         title: "导出数据库",
         defaultPath: "app-state.db",
         filters: [{ name: "SQLite Database", extensions: ["db", "sqlite"] }]
       });
       if (result.canceled || !result.filePath) return null;
-      require$$0.copyFileSync(dbPath, result.filePath);
+      nodeFs.copyFileSync(dbPath, result.filePath);
       return result.filePath;
     }
   );
@@ -795,7 +875,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:getAllEntries",
     (_e, dbPath) => {
-      if (!require$$0.existsSync(dbPath)) return [];
+      if (!nodeFs.existsSync(dbPath)) return [];
       try {
         const db = openDb(dbPath);
         ensureKvTable(db);
@@ -825,7 +905,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:deleteEntry",
     (_e, dbPath, key) => {
-      if (!require$$0.existsSync(dbPath)) return;
+      if (!nodeFs.existsSync(dbPath)) return;
       const db = openDb(dbPath);
       try {
         db.prepare("DELETE FROM shapp_kv WHERE key = ?").run(key);
@@ -837,7 +917,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:clearAll",
     (_e, dbPath) => {
-      if (!require$$0.existsSync(dbPath)) return;
+      if (!nodeFs.existsSync(dbPath)) return;
       const db = openDb(dbPath);
       try {
         db.prepare("DELETE FROM shapp_kv").run();
@@ -878,6 +958,9 @@ function registerServerHandlers() {
   electron.ipcMain.handle("server:getUrl", () => {
     return staticServer.getUrl();
   });
+  electron.ipcMain.handle("server:getLanUrl", () => {
+    return staticServer.getLanUrl();
+  });
 }
 function registerCaptureHandlers(win) {
   electron.ipcMain.handle(
@@ -901,16 +984,21 @@ function registerCaptureHandlers(win) {
     "capture:saveMedia",
     async (_e, params) => {
       const { data, mimeType, filename, role, appDir } = params;
+      const isBuiltinRole = role === "cover" || role === "carousel" || role === "logo";
       let savePath;
-      if (role === "cover" || role === "carousel") {
-        const destDir = path.join(appDir, "assets", role === "cover" ? "." : "carousel");
+      let relPath;
+      if (isBuiltinRole) {
+        const destDir = path.join(appDir, "assets", role === "carousel" ? "carousel" : ".");
         await promises.mkdir(destDir, { recursive: true });
         if (role === "cover") {
-          const ext = filename.split(".").pop()?.toLowerCase() || "png";
-          savePath = path.join(destDir, `cover.${ext}`);
+          savePath = path.join(destDir, "cover.webp");
+        } else if (role === "logo") {
+          savePath = path.join(destDir, "logo.webp");
         } else {
-          savePath = path.join(destDir, filename);
+          const webpName = filename.replace(/\.[^.]+$/, ".webp");
+          savePath = path.join(destDir, webpName);
         }
+        relPath = path.relative(appDir, savePath);
       } else {
         const result = await electron.dialog.showSaveDialog({
           title: "保存媒体文件",
@@ -924,10 +1012,20 @@ function registerCaptureHandlers(win) {
         savePath = result.filePath;
       }
       const base64 = data.replace(/^data:[^;]+;base64,/, "");
-      const buffer = Buffer.from(base64, "base64");
-      await promises.writeFile(savePath, buffer);
-      if (role === "cover" || role === "carousel") {
-        win.webContents.send("package:assetsChanged", { role, appDir, filename });
+      const inputBuffer = Buffer.from(base64, "base64");
+      let outputBuffer;
+      if (isBuiltinRole) {
+        const pipeline = sharp(inputBuffer);
+        if (role === "logo") {
+          pipeline.resize(128, 128, { fit: "cover", position: "center" });
+        }
+        outputBuffer = await pipeline.webp({ lossless: true }).toBuffer();
+      } else {
+        outputBuffer = inputBuffer;
+      }
+      await promises.writeFile(savePath, outputBuffer);
+      if (isBuiltinRole) {
+        win.webContents.send("package:assetsChanged", { role, appDir, filename, relPath });
       }
       return savePath;
     }
@@ -2548,7 +2646,7 @@ function requireWindows() {
   hasRequiredWindows = 1;
   windows = isexe;
   isexe.sync = sync;
-  var fs = require$$0;
+  var fs2 = nodeFs;
   function checkPathExt(path2, options) {
     var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
     if (!pathext) {
@@ -2573,12 +2671,12 @@ function requireWindows() {
     return checkPathExt(path2, options);
   }
   function isexe(path2, options, cb) {
-    fs.stat(path2, function(er, stat) {
+    fs2.stat(path2, function(er, stat) {
       cb(er, er ? false : checkStat(stat, path2, options));
     });
   }
   function sync(path2, options) {
-    return checkStat(fs.statSync(path2), path2, options);
+    return checkStat(fs2.statSync(path2), path2, options);
   }
   return windows;
 }
@@ -2589,14 +2687,14 @@ function requireMode() {
   hasRequiredMode = 1;
   mode = isexe;
   isexe.sync = sync;
-  var fs = require$$0;
+  var fs2 = nodeFs;
   function isexe(path2, options, cb) {
-    fs.stat(path2, function(er, stat) {
+    fs2.stat(path2, function(er, stat) {
       cb(er, er ? false : checkStat(stat, options));
     });
   }
   function sync(path2, options) {
-    return checkStat(fs.statSync(path2), options);
+    return checkStat(fs2.statSync(path2), options);
   }
   function checkStat(stat, options) {
     return stat.isFile() && checkMode(stat, options);
@@ -2885,16 +2983,16 @@ var hasRequiredReadShebang;
 function requireReadShebang() {
   if (hasRequiredReadShebang) return readShebang_1;
   hasRequiredReadShebang = 1;
-  const fs = require$$0;
+  const fs2 = nodeFs;
   const shebangCommand2 = requireShebangCommand();
   function readShebang(command) {
     const size = 150;
     const buffer = Buffer.alloc(size);
     let fd;
     try {
-      fd = fs.openSync(command, "r");
-      fs.readSync(fd, buffer, 0, size, 0);
-      fs.closeSync(fd);
+      fd = fs2.openSync(command, "r");
+      fs2.readSync(fd, buffer, 0, size, 0);
+      fs2.closeSync(fd);
     } catch (e) {
     }
     return shebangCommand2(buffer.toString());
@@ -3018,7 +3116,7 @@ var hasRequiredCrossSpawn;
 function requireCrossSpawn() {
   if (hasRequiredCrossSpawn) return crossSpawn.exports;
   hasRequiredCrossSpawn = 1;
-  const cp = require$$0$1;
+  const cp = require$$0;
   const parse = requireParse();
   const enoent2 = requireEnoent();
   function spawn(command, args, options) {
@@ -3161,6 +3259,25 @@ async function createOpencode(options) {
     server
   };
 }
+let _logPath = null;
+function agentLog(msg) {
+  const ts = (/* @__PURE__ */ new Date()).toISOString();
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  if (!_logPath) {
+    try {
+      const dir = path__namespace.join(electron.app.getPath("userData"), "logs");
+      nodeFs.mkdirSync(dir, { recursive: true });
+      _logPath = path__namespace.join(dir, "agent.log");
+    } catch {
+      return;
+    }
+  }
+  try {
+    nodeFs.appendFileSync(_logPath, line + "\n", "utf-8");
+  } catch {
+  }
+}
 let _instance = null;
 let _startPromise = null;
 let _eventAbort = null;
@@ -3177,22 +3294,83 @@ function getClient() {
 function getSkillsConfigDir() {
   return electron.app.isPackaged ? path__namespace.join(process.resourcesPath, "github-config") : path__namespace.join(__dirname, "../../.github");
 }
+function ensureOpencodeWrapperDir() {
+  const bundledDir = electron.app.isPackaged ? path__namespace.join(process.resourcesPath, "opencode") : path__namespace.join(__dirname, "../../resources/opencode");
+  agentLog(`ensureOpencodeWrapperDir: packaged=${electron.app.isPackaged}, bundledDir=${bundledDir}, exists=${nodeFs.existsSync(bundledDir)}`);
+  if (!nodeFs.existsSync(bundledDir)) return null;
+  const wrapperDir = electron.app.isPackaged ? path__namespace.join(electron.app.getPath("userData"), "opencode-wrapper") : path__namespace.join(__dirname, "../../../node_modules/.cache/opencode-wrapper");
+  nodeFs.mkdirSync(wrapperDir, { recursive: true });
+  if (process.platform === "win32") {
+    const src = path__namespace.join(bundledDir, "opencode-win32-x64.exe");
+    const dst = path__namespace.join(wrapperDir, "opencode.cmd");
+    agentLog(`ensureOpencodeWrapperDir: win32 src=${src}, srcExists=${nodeFs.existsSync(src)}, dst=${dst}, dstExists=${nodeFs.existsSync(dst)}`);
+    if (nodeFs.existsSync(src) && !nodeFs.existsSync(dst)) {
+      nodeFs.writeFileSync(dst, `@"${src}" %*\r
+`, "utf-8");
+      agentLog(`ensureOpencodeWrapperDir: created wrapper cmd`);
+    }
+  } else {
+    const candidates = ["opencode-darwin-arm64", "opencode-darwin-x64", "opencode-linux-x64"];
+    for (const name of candidates) {
+      const src = path__namespace.join(bundledDir, name);
+      if (nodeFs.existsSync(src)) {
+        const dst = path__namespace.join(wrapperDir, "opencode");
+        if (!nodeFs.existsSync(dst)) {
+          nodeFs.writeFileSync(dst, `#!/bin/sh
+exec "${src}" "$@"
+`, { mode: 493 });
+        }
+        break;
+      }
+    }
+  }
+  return wrapperDir;
+}
 async function spawnOpenCodeServer(port, cwd) {
+  agentLog(`spawnOpenCodeServer: port=${port}, cwd=${cwd}`);
   const skillsConfigDir = getSkillsConfigDir();
   const savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
-  if (require$$0.existsSync(skillsConfigDir)) {
+  if (nodeFs.existsSync(skillsConfigDir)) {
     process.env.OPENCODE_CONFIG_DIR = skillsConfigDir;
+    agentLog(`spawnOpenCodeServer: OPENCODE_CONFIG_DIR=${skillsConfigDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: skillsConfigDir NOT found: ${skillsConfigDir}`);
+  }
+  const savedPath = process.env.PATH;
+  const wrapperDir = ensureOpencodeWrapperDir();
+  if (wrapperDir) {
+    process.env.PATH = `${wrapperDir}${path__namespace.delimiter}${savedPath ?? ""}`;
+    agentLog(`spawnOpenCodeServer: PATH prepended with ${wrapperDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: NO wrapper dir — relying on system PATH`);
   }
   const savedCwd = process.cwd();
   process.chdir(cwd);
-  const raw = createOpencode({ hostname: "127.0.0.1", port, timeout: 15e3 });
+  const raw = createOpencode({
+    hostname: "127.0.0.1",
+    port,
+    timeout: 15e3,
+    config: {
+      agent: {
+        build: { permission: { external_directory: "deny" } },
+        plan: { permission: { external_directory: "deny" } },
+        general: { permission: { external_directory: "deny" } }
+      }
+    }
+  });
   process.chdir(savedCwd);
+  if (savedPath !== void 0) {
+    process.env.PATH = savedPath;
+  } else {
+    delete process.env.PATH;
+  }
   if (savedConfigDir !== void 0) {
     process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   } else {
     delete process.env.OPENCODE_CONFIG_DIR;
   }
   const resolved = await raw;
+  agentLog(`spawnOpenCodeServer: server ready at ${resolved.server.url}`);
   const client2 = createOpencodeClient({ baseUrl: resolved.server.url, directory: cwd });
   return { server: resolved.server, client: client2 };
 }
@@ -3207,16 +3385,57 @@ function findFreePort() {
   });
 }
 function normalizeTitle(title) {
-  if (!title) return "New Session";
-  if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(title)) return "New Session";
+  if (!title) return "";
+  if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(title)) return "";
   return title;
+}
+async function injectSessionContext(client2, sessionId, projectDir) {
+  const dir = projectDir ?? _currentProjectDir ?? process.cwd();
+  const contextLines = [
+    `当前项目目录: ${dir}`,
+    "",
+    "## 重要说明（请严格遵守）",
+    "",
+    "### 1. 主动使用 Skill",
+    `你当前可以访问以下 Skill（位于 OPENCODE_CONFIG_DIR/skills/ 目录下）：`,
+    "- `mars-app-generator` — 生成 MARS 应用类微应用（WebView 前端 + TypeScript 后端）",
+    "- `mars-cocos-game-generator` — 生成 Cocos Creator 游戏类微应用",
+    "- `mars-unity-game-generator` — 生成 Unity 游戏类微应用",
+    "",
+    "当用户请求创建 MARS 应用或游戏时，**必须主动读取并使用对应的 Skill 文件**。",
+    "Skill 文件中包含了完整的协议规范、SDK API 用法、权限模型和打包约定。",
+    "**不要凭记忆生成 MARS 应用代码**，始终以 Skill 文件中的规范为准。",
+    "",
+    "### 2. 文件直接放在当前项目目录",
+    `**所有生成的应用文件必须直接放在当前项目目录中：\`${dir}\`**`,
+    "- ❌ 不要创建新的子目录（如 `my-app/`, `todo-app/` 等）",
+    "- ✅ 直接在当前目录下创建 `manifest.json`、`permissions.json`、`frontend/index.html`、`backend/main.ts` 等文件",
+    "- 如果当前目录已有文件，先了解现有结构再决定如何修改",
+    "- 善用 `list_dir`、`read_file` 等工具了解当前目录结构",
+    "",
+    "### 3. 其他注意事项",
+    "- 使用 `manage_todo_list` 规划复杂任务",
+    "- 后端代码必须使用 `@mars/sdk` 而非 `@mars/sdk/common`",
+    "- 数据库操作前必须先 `CREATE TABLE IF NOT EXISTS`",
+    "- 每个 ZIP 包文件数上限 2000，避免生成大量独立数据文件"
+  ];
+  const contextText = contextLines.join("\n");
+  agentLog(`injectSessionContext: sending context to ${sessionId}, len=${contextText.length}`);
+  await client2.session.promptAsync({
+    path: { id: sessionId },
+    body: {
+      noReply: true,
+      parts: [{ type: "text", text: contextText }]
+    }
+  });
+  agentLog(`injectSessionContext: done for ${sessionId}`);
 }
 const AGENT_STORE_KEY = "agentPanel";
 const AGENT_DEFAULTS = {
   width: 360,
   visible: true,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   mode: "build",
   encryptedKeys: {}
 };
@@ -3291,17 +3510,24 @@ function startControlPolling(win) {
   })().catch((err) => console.error("[ControlPoll] fatal:", err));
 }
 async function startEventSubscription(win) {
+  agentLog(`startEventSubscription: starting, serverUrl=${_instance?.server.url}`);
   if (_eventAbort) {
     _eventAbort.abort();
+    agentLog(`startEventSubscription: aborted previous subscription`);
   }
   _eventAbort = new AbortController();
   const client2 = getClient();
   try {
     const response = await client2.event.subscribe();
+    agentLog(`startEventSubscription: SSE connected, entering event loop`);
+    let eventCount = 0;
     for await (const event of response.stream) {
       if (_eventAbort?.signal.aborted) break;
+      eventCount++;
       const e = event;
-      console.log("[Agent][SSE]", JSON.stringify({ type: e?.type, properties: e?.properties }));
+      if (eventCount % 50 === 0 || e?.type === "session.error" || e?.type === "session.idle") {
+        agentLog(`SSE event #${eventCount}: type=${e?.type}, props=${JSON.stringify(e?.properties).slice(0, 200)}`);
+      }
       if (e?.type === "permission.asked") {
         const { id: permissionID, sessionID } = e.properties ?? {};
         if (permissionID && sessionID) {
@@ -3331,7 +3557,7 @@ async function startEventSubscription(win) {
     }
   } catch (err) {
     if (!_eventAbort?.signal.aborted) {
-      console.error("[Agent] Event subscription error:", err);
+      agentLog(`startEventSubscription: SSE error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
@@ -3367,18 +3593,20 @@ function getMimeType(ext) {
 function registerAgentHandlers(win) {
   _mainWindow = win;
   electron.ipcMain.handle("agent:startServer", async () => {
+    agentLog(`agent:startServer called, existing instance=${!!_instance}, startPromise=${!!_startPromise}`);
     if (_instance) return { ok: true };
     if (!_startPromise) {
       _startPromise = (async () => {
         try {
           const port = await findFreePort();
           const cwd = _currentProjectDir ?? process.cwd();
+          agentLog(`agent:startServer: spawning on port ${port}, cwd=${cwd}`);
           _instance = await spawnOpenCodeServer(port, cwd);
-          console.log("[Agent] OpenCode server started at", _instance.server.url, "cwd:", cwd);
+          agentLog(`agent:startServer: server ready at ${_instance.server.url}, cwd=${cwd}`);
           return { ok: true };
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          console.error("[Agent] Failed to start OpenCode server:", error);
+          agentLog(`agent:startServer: FAILED — ${error}`);
           return { ok: false, error };
         } finally {
           _startPromise = null;
@@ -3403,7 +3631,7 @@ function registerAgentHandlers(win) {
       _instance = await spawnOpenCodeServer(port, dir);
       console.log("[Agent] OpenCode restarted for project:", dir, "at", _instance.server.url);
       if (_mainWindow && !_mainWindow.isDestroyed()) {
-        await startEventSubscription(_mainWindow);
+        startEventSubscription(_mainWindow);
         startControlPolling(_mainWindow);
       }
     } catch (err) {
@@ -3426,6 +3654,9 @@ function registerAgentHandlers(win) {
     const result = await client2.session.create(opts);
     if (result.error) throw new Error(String(result.error));
     const s = result.data;
+    injectSessionContext(client2, s.id, directory).catch((err) => {
+      agentLog(`injectSessionContext failed for ${s.id}: ${err instanceof Error ? err.message : String(err)}`);
+    });
     return { id: s.id, title: normalizeTitle(s.title), createdAt: s.time?.created ?? Date.now() };
   });
   electron.ipcMain.handle("agent:listSessions", async () => {
@@ -3471,6 +3702,14 @@ function registerAgentHandlers(win) {
               status: state?.status ?? "pending"
             }];
           }
+          if (p.type === "file") {
+            return [{
+              type: "file",
+              mimeType: p.mimeType ?? p.mime ?? "",
+              url: p.url ?? "",
+              filename: p.filename ?? p.name ?? ""
+            }];
+          }
           return [];
         }),
         createdAt: item.info.time?.created ?? Date.now()
@@ -3508,6 +3747,7 @@ function registerAgentHandlers(win) {
     if (typeof text !== "string" || text.trim() === "") throw new Error("Empty message");
     const client2 = getClient();
     const agentData = getAgentStore();
+    agentLog(`sendPrompt: sessionId=${sessionId}, provider=${agentData.selectedProvider}, model=${agentData.selectedModel}, mode=${mode2}, textLen=${text.length}, serverUrl=${_instance?.server.url}`);
     const fileParts = (files ?? []).map((f) => ({
       type: "file",
       mime: f.mime,
@@ -3524,7 +3764,18 @@ function registerAgentHandlers(win) {
         ...mode2 ? { agent: mode2 } : {},
         parts: [...fileParts, { type: "text", text }]
       }
+    }).then((result) => {
+      agentLog(`sendPrompt: response received, ok=${!result?.error}, error=${JSON.stringify(result?.error)}`);
+      if (result?.error) {
+        if (!win.isDestroyed()) {
+          win.webContents.send("agent:event", {
+            type: "session.error",
+            properties: { sessionID: sessionId, error: { name: "PromptError", data: { message: typeof result.error === "string" ? result.error : JSON.stringify(result.error) } } }
+          });
+        }
+      }
     }).catch((err) => {
+      agentLog(`sendPrompt: network/throw error: ${err.message}`);
       if (!win.isDestroyed()) {
         win.webContents.send("agent:event", {
           type: "session.error",
@@ -3545,8 +3796,13 @@ function registerAgentHandlers(win) {
     const client2 = getClient();
     try {
       const result = await client2.config.providers();
-      if (result.error) return [];
+      agentLog(`listProviders: result.error=${!!result.error}, data keys=${result.data ? Object.keys(result.data).join(",") : "null"}`);
+      if (result.error) {
+        agentLog(`listProviders: error detail=${JSON.stringify(result.error)}`);
+        return [];
+      }
       const providers = result.data?.providers ?? [];
+      agentLog(`listProviders: got ${providers.length} providers`);
       return providers.map((p) => ({
         id: p.id ?? p.name,
         name: p.name ?? p.id,
@@ -3556,7 +3812,8 @@ function registerAgentHandlers(win) {
           name: m.name ?? m.id
         }))
       }));
-    } catch {
+    } catch (err) {
+      agentLog(`listProviders: exception: ${err?.message ?? err}`);
       return [];
     }
   });
@@ -3569,6 +3826,7 @@ function registerAgentHandlers(win) {
       ]);
       const cfg = cfgResult.data;
       const provData = provResult.data;
+      agentLog(`getConfig: cfg keys=${cfg ? Object.keys(cfg).join(",") : "null"}, provData keys=${provData ? Object.keys(provData).join(",") : "null"}`);
       const rawProviders = provData?.providers ?? [];
       const defaults = provData?.default ?? {};
       const cfgModel = cfg?.model ?? "";
@@ -3576,6 +3834,7 @@ function registerAgentHandlers(win) {
       const defaultEntries = Object.entries(defaults);
       const defaultProviderId = cfgProvider || (defaultEntries[0]?.[0] ?? "");
       const defaultModelId = cfgModelId || (defaultEntries[0]?.[1] ?? "");
+      agentLog(`getConfig: cfgModel=${cfgModel}, defaultProviderId=${defaultProviderId}, defaultModelId=${defaultModelId}, defaultEntries=${JSON.stringify(defaultEntries)}`);
       const freeModels = [];
       const providerGroups = [];
       for (const p of rawProviders) {
@@ -3599,8 +3858,28 @@ function registerAgentHandlers(win) {
         });
       }
       return { freeModels, providerGroups, defaultProviderId, defaultModelId };
-    } catch {
+    } catch (err) {
+      agentLog(`getConfig: exception: ${err?.message ?? err}`);
       return { freeModels: [], providerGroups: [], defaultProviderId: "", defaultModelId: "" };
+    }
+  });
+  electron.ipcMain.handle("agent:setProviderConfig", async (_e, providerId, config) => {
+    if (!providerId || typeof providerId !== "string") throw new Error("Invalid provider id");
+    const client2 = getClient();
+    const body = { type: config.type };
+    if (config.key) body.key = config.key;
+    if (config.options && Object.keys(config.options).length > 0) {
+      body.options = config.options;
+    }
+    await client2.auth.set({
+      path: { id: providerId },
+      body
+    });
+    if (config.key && electron.safeStorage.isEncryptionAvailable()) {
+      const agentData = getAgentStore();
+      const encryptedKeys = { ...agentData.encryptedKeys };
+      encryptedKeys[providerId] = electron.safeStorage.encryptString(config.key).toString("base64");
+      setAgentStore({ encryptedKeys });
     }
   });
   electron.ipcMain.handle("agent:setApiKey", async (_e, providerId, key) => {
@@ -3630,7 +3909,23 @@ function registerAgentHandlers(win) {
       if (!listData) return [];
       const all = listData.all ?? [];
       const connected = listData.connected ?? [];
-      const authMap = authData ?? {};
+      const authMap = {};
+      if (authData) {
+        for (const [key, methods] of Object.entries(authData)) {
+          authMap[key] = methods.map((m) => ({
+            type: m.type,
+            label: m.label,
+            prompts: Array.isArray(m.prompts) ? m.prompts.map((p) => ({
+              type: p.type,
+              key: p.key,
+              message: p.message,
+              placeholder: p.placeholder,
+              options: p.options,
+              when: p.when
+            })) : void 0
+          }));
+        }
+      }
       return all.map((p) => ({
         id: p.id ?? p.name,
         name: p.name ?? p.id,
@@ -3639,10 +3934,47 @@ function registerAgentHandlers(win) {
         npm: p.npm,
         connected: connected.includes(p.id),
         authMethods: authMap[p.id] ?? [],
-        // models is a dict { [modelId]: Model }
+        // models is a dict { [modelId]: Model } — include full metadata
         models: Object.values(p.models ?? {}).map((m) => ({
           id: m.id,
-          name: m.name ?? m.id
+          name: m.name ?? m.id,
+          family: m.family,
+          status: m.status ?? "active",
+          capabilities: m.capabilities ? {
+            temperature: m.capabilities.temperature ?? false,
+            reasoning: m.capabilities.reasoning ?? false,
+            attachment: m.capabilities.attachment ?? false,
+            toolcall: m.capabilities.toolcall ?? false,
+            input: {
+              text: m.capabilities.input?.text ?? true,
+              audio: m.capabilities.input?.audio ?? false,
+              image: m.capabilities.input?.image ?? false,
+              video: m.capabilities.input?.video ?? false,
+              pdf: m.capabilities.input?.pdf ?? false
+            },
+            output: {
+              text: m.capabilities.output?.text ?? true,
+              audio: m.capabilities.output?.audio ?? false,
+              image: m.capabilities.output?.image ?? false,
+              video: m.capabilities.output?.video ?? false,
+              pdf: m.capabilities.output?.pdf ?? false
+            }
+          } : void 0,
+          cost: m.cost ? {
+            input: m.cost.input,
+            output: m.cost.output,
+            cacheRead: m.cost.cache?.read ?? m.cost.cache_read,
+            cacheWrite: m.cost.cache?.write ?? m.cost.cache_write
+          } : void 0,
+          limit: m.limit ? {
+            context: m.limit.context,
+            input: m.limit.input,
+            output: m.limit.output
+          } : void 0,
+          releaseDate: m.release_date,
+          variants: m.variants ? Object.entries(m.variants).map(
+            ([id, v]) => ({ id, name: v.name ?? id, disabled: v.disabled })
+          ) : void 0
         }))
       }));
     } catch {
@@ -3687,13 +4019,24 @@ function registerAgentHandlers(win) {
       console.error("[IPC] question.reply fetch failed:", err);
     }
   });
-  electron.ipcMain.handle("agent:subscribe", async () => {
-    await startEventSubscription(win);
+  electron.ipcMain.handle("agent:subscribe", () => {
+    startEventSubscription(win);
     startControlPolling(win);
   });
   electron.ipcMain.handle("agent:unsubscribe", () => {
     _eventAbort?.abort();
     _eventAbort = null;
+  });
+  electron.ipcMain.handle("agent:getLog", () => {
+    if (!_logPath || !nodeFs.existsSync(_logPath)) return { path: null, tail: "" };
+    try {
+      const content = nodeFs.readFileSync(_logPath, "utf-8");
+      const lines = content.split("\n");
+      const tail = lines.slice(-200).join("\n");
+      return { path: _logPath, tail };
+    } catch {
+      return { path: _logPath, tail: "" };
+    }
   });
 }
 function stopAgentSubscription() {
@@ -3710,11 +4053,717 @@ function stopAgentSubscription() {
   }
   _currentProjectDir = null;
 }
+const fs = {
+  promises: {
+    readFile: nodeFs__namespace.promises.readFile,
+    writeFile: nodeFs__namespace.promises.writeFile,
+    unlink: nodeFs__namespace.promises.unlink,
+    readdir: nodeFs__namespace.promises.readdir,
+    mkdir: nodeFs__namespace.promises.mkdir,
+    rmdir: nodeFs__namespace.promises.rmdir,
+    stat: nodeFs__namespace.promises.stat,
+    lstat: nodeFs__namespace.promises.lstat,
+    readlink: nodeFs__namespace.promises.readlink,
+    symlink: nodeFs__namespace.promises.symlink,
+    chmod: nodeFs__namespace.promises.chmod
+  }
+};
+const AGENT_NAME = "Shapp DevTool";
+const AGENT_EMAIL = "devtool@shapp.local";
+function ensureDir(dir) {
+  if (!nodeFs.existsSync(dir)) nodeFs.mkdirSync(dir, { recursive: true });
+}
+function gitDir(projectDir) {
+  return path.join(projectDir, ".git");
+}
+async function repoExists(projectDir) {
+  try {
+    const dir = gitDir(projectDir);
+    return nodeFs.existsSync(dir);
+  } catch {
+    return false;
+  }
+}
+async function gitInit(projectDir) {
+  ensureDir(projectDir);
+  const exists = await repoExists(projectDir);
+  if (exists) {
+    const entries = nodeFs.readdirSync(projectDir).filter((e) => e !== ".git");
+    if (entries.length === 0) {
+      nodeFs.rmSync(gitDir(projectDir), { recursive: true, force: true });
+    } else {
+      return "already-initialized";
+    }
+  }
+  await git__namespace.init({ fs, dir: projectDir, defaultBranch: "main" });
+  const initialOid = await gitCommit(projectDir, "🌱 Initial commit (DevTool auto-init)", {
+    allowEmpty: true
+  });
+  return initialOid;
+}
+async function gitCommit(projectDir, message, opts) {
+  if (!await repoExists(projectDir)) {
+    await gitInit(projectDir);
+  }
+  await git__namespace.add({ fs, dir: projectDir, filepath: "." });
+  const oid = await git__namespace.commit({
+    fs,
+    dir: projectDir,
+    message,
+    author: { name: AGENT_NAME, email: AGENT_EMAIL },
+    ...opts?.allowEmpty ? { allowEmpty: true } : {}
+  });
+  return oid;
+}
+async function gitLog(projectDir, opts) {
+  if (!await repoExists(projectDir)) return [];
+  const commits = await git__namespace.log({
+    fs,
+    dir: projectDir,
+    depth: opts?.depth ?? 50,
+    ref: opts?.branch ?? "main"
+  });
+  return commits.map((c) => ({
+    oid: c.oid,
+    shortOid: c.oid.slice(0, 7),
+    message: c.commit.message,
+    author: {
+      name: c.commit.author.name,
+      email: c.commit.author.email
+    },
+    committedAt: c.commit.author.timestamp * 1e3,
+    parentOids: c.commit.parent
+  }));
+}
+async function gitGraph(projectDir) {
+  if (!await repoExists(projectDir)) return { commits: [], branches: [] };
+  const branchNames = await git__namespace.listBranches({ fs, dir: projectDir });
+  const current = await git__namespace.currentBranch({ fs, dir: projectDir }) || "main";
+  const branchRefs = [];
+  for (const name of branchNames) {
+    try {
+      const tipOid = await git__namespace.resolveRef({ fs, dir: projectDir, ref: name });
+      branchRefs.push({ name, tipOid, isCurrent: name === current });
+    } catch {
+    }
+  }
+  const commitMap = /* @__PURE__ */ new Map();
+  for (const ref of branchNames) {
+    try {
+      const commits2 = await git__namespace.log({ fs, dir: projectDir, ref, depth: 200 });
+      for (const c of commits2) {
+        if (!commitMap.has(c.oid)) {
+          commitMap.set(c.oid, {
+            oid: c.oid,
+            shortOid: c.oid.slice(0, 7),
+            message: c.commit.message,
+            author: {
+              name: c.commit.author.name,
+              email: c.commit.author.email
+            },
+            committedAt: c.commit.author.timestamp * 1e3,
+            parentOids: c.commit.parent ?? []
+          });
+        }
+      }
+    } catch {
+    }
+  }
+  const commits = [...commitMap.values()].sort((a, b) => b.committedAt - a.committedAt);
+  return { commits, branches: branchRefs };
+}
+async function gitStatus(projectDir) {
+  if (!await repoExists(projectDir)) return [];
+  const statusMatrix = await git__namespace.statusMatrix({ fs, dir: projectDir });
+  const entries = [];
+  for (const [filepath, head, workdir, stage] of statusMatrix) {
+    let status = null;
+    if (head === 1 && workdir === 0 && stage === 1) status = "deleted";
+    else if (head === 1 && workdir === 2 && stage === 1) status = "modified";
+    else if (head === 1 && workdir === 0 && stage === 0) status = "deleted";
+    else if (head === 0 && workdir === 0 && stage === 2) status = "added";
+    else if (head === 0 && workdir === 2 && stage === 0) status = "untracked";
+    else if (head === 0 && workdir === 2 && stage === 2) status = "added";
+    else if (head === 1 && workdir === 2 && stage === 2) status = "modified";
+    if (status) {
+      entries.push({ path: filepath, status });
+    }
+  }
+  return entries;
+}
+async function gitListBranches(projectDir) {
+  if (!await repoExists(projectDir)) return [];
+  const branches = await git__namespace.listBranches({ fs, dir: projectDir });
+  const current = await git__namespace.currentBranch({ fs, dir: projectDir });
+  const result = [];
+  for (const name of branches) {
+    const resolved = await git__namespace.resolveRef({ fs, dir: projectDir, ref: name });
+    result.push({
+      name,
+      isCurrent: name === current,
+      tipOid: resolved
+    });
+  }
+  return result;
+}
+async function gitCreateBranch(projectDir, branchName) {
+  if (!await repoExists(projectDir)) {
+    await gitInit(projectDir);
+  }
+  await git__namespace.branch({ fs, dir: projectDir, ref: branchName, checkout: true });
+}
+async function gitSwitchBranch(projectDir, branchName) {
+  await git__namespace.checkout({ fs, dir: projectDir, ref: branchName });
+}
+async function getCurrentBranch(projectDir) {
+  if (!await repoExists(projectDir)) return "main";
+  return await git__namespace.currentBranch({ fs, dir: projectDir }) || "main";
+}
+async function gitDiff(projectDir, oid1, oid2) {
+  if (!await repoExists(projectDir)) return [];
+  if (!oid1) {
+    try {
+      oid1 = await git__namespace.resolveRef({ fs, dir: projectDir, ref: "HEAD" });
+    } catch {
+      return [];
+    }
+  }
+  const fileStates = await git__namespace.walk({
+    fs,
+    dir: projectDir,
+    trees: oid2 ? [git__namespace.TREE({ ref: oid1 }), git__namespace.TREE({ ref: oid2 })] : [git__namespace.TREE({ ref: oid1 }), git__namespace.WORKDIR()],
+    map: async (filepath, entries) => {
+      if (filepath === ".") return null;
+      const [A, B] = entries;
+      if (!A && !B) return null;
+      if (A && B && await A.oid() === await B.oid()) return null;
+      let changeType = "modified";
+      if (!A) changeType = "added";
+      else if (!B) changeType = "deleted";
+      return {
+        path: filepath,
+        oldOid: A ? await A.oid() : void 0,
+        newOid: B ? await B.oid() : void 0,
+        changeType
+      };
+    }
+  });
+  return fileStates.filter(Boolean);
+}
+async function gitRevertFile(projectDir, filepath) {
+  if (!await repoExists(projectDir)) return;
+  await git__namespace.checkout({
+    fs,
+    dir: projectDir,
+    ref: "HEAD",
+    filepaths: [filepath],
+    force: true
+  });
+}
+async function gitResetToCommit(projectDir, oid) {
+  if (!await repoExists(projectDir)) return;
+  await git__namespace.checkout({
+    fs,
+    dir: projectDir,
+    ref: oid,
+    force: true
+  });
+}
+async function autoCommit(projectDir, context) {
+  if (!await repoExists(projectDir)) {
+    await gitInit(projectDir);
+  }
+  const statusEntries = await gitStatus(projectDir);
+  if (statusEntries.length === 0) return null;
+  const files = statusEntries.map((s) => s.path);
+  const message = context.summary;
+  const oid = await gitCommit(projectDir, message);
+  return {
+    oid,
+    shortOid: oid.slice(0, 7),
+    message,
+    fileCount: files.length,
+    files
+  };
+}
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS tasks (
+  id          TEXT PRIMARY KEY,       -- UUID
+  session_id  TEXT NOT NULL,          -- OpenCode session ID
+  project_dir TEXT NOT NULL,          -- absolute path of opened project
+  title       TEXT DEFAULT '',        -- human-readable summary
+  status      TEXT DEFAULT 'running', -- running | completed | error
+  created_at  INTEGER NOT NULL,       -- unix ms
+  updated_at  INTEGER NOT NULL        -- unix ms
+);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id          TEXT PRIMARY KEY,       -- UUID
+  task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  commit_oid  TEXT NOT NULL,          -- git commit SHA
+  branch      TEXT NOT NULL,          -- git branch name
+  summary     TEXT DEFAULT '',        -- human-readable description of this checkpoint
+  file_count  INTEGER DEFAULT 0,     -- changed file count
+  created_at  INTEGER NOT NULL        -- unix ms
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_task ON checkpoints(task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_dir);
+`;
+let _db = null;
+function getDbPath() {
+  const dir = path.join(electron.app.getPath("userData"), "devtool");
+  nodeFs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, "checkpoints.db");
+}
+function getCheckpointDb() {
+  if (!_db) {
+    _db = new Database(getDbPath());
+    _db.pragma("journal_mode = WAL");
+    _db.pragma("foreign_keys = ON");
+    _db.exec(SCHEMA);
+  }
+  return _db;
+}
+function closeCheckpointDb() {
+  _db?.close();
+  _db = null;
+}
+function createTask(params) {
+  const db = getCheckpointDb();
+  const now = Date.now();
+  const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(params.id);
+  if (existing) {
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, params.id);
+    return existing;
+  }
+  db.prepare(
+    `INSERT INTO tasks (id, session_id, project_dir, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'running', ?, ?)`
+  ).run(params.id, params.sessionId, params.projectDir, params.title ?? "", now, now);
+  return {
+    id: params.id,
+    session_id: params.sessionId,
+    project_dir: params.projectDir,
+    title: params.title ?? "",
+    status: "running",
+    created_at: now,
+    updated_at: now
+  };
+}
+function updateTaskStatus(id, status) {
+  const db = getCheckpointDb();
+  db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id);
+}
+function getTask(id) {
+  const db = getCheckpointDb();
+  return db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+}
+function listTasks(projectDir) {
+  const db = getCheckpointDb();
+  return db.prepare(
+    "SELECT * FROM tasks WHERE project_dir = ? ORDER BY updated_at DESC LIMIT 100"
+  ).all(projectDir);
+}
+function deleteTask(id) {
+  const db = getCheckpointDb();
+  db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+}
+function createCheckpoint(params) {
+  const db = getCheckpointDb();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO checkpoints (id, task_id, commit_oid, branch, summary, file_count, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(params.id, params.taskId, params.commitOid, params.branch, params.summary ?? "", params.fileCount ?? 0, now);
+  return {
+    id: params.id,
+    task_id: params.taskId,
+    commit_oid: params.commitOid,
+    branch: params.branch,
+    summary: params.summary ?? "",
+    file_count: params.fileCount ?? 0,
+    created_at: now
+  };
+}
+function listCheckpoints(taskId) {
+  const db = getCheckpointDb();
+  return db.prepare(
+    "SELECT * FROM checkpoints WHERE task_id = ? ORDER BY created_at ASC"
+  ).all(taskId);
+}
+function getTaskWithCheckpoints(taskId) {
+  const task = getTask(taskId);
+  if (!task) return void 0;
+  return { ...task, checkpoints: listCheckpoints(taskId) };
+}
+function listTasksWithCheckpoints(projectDir) {
+  const tasks = listTasks(projectDir);
+  return tasks.map((t) => ({ ...t, checkpoints: listCheckpoints(t.id) }));
+}
+function registerGitHandlers(win) {
+  electron.ipcMain.handle("git:init", async (_e, projectDir) => {
+    return gitInit(projectDir);
+  });
+  electron.ipcMain.handle("git:commit", async (_e, projectDir, message) => {
+    return gitCommit(projectDir, message);
+  });
+  electron.ipcMain.handle("git:log", async (_e, projectDir, depth, branch) => {
+    return gitLog(projectDir, { depth, branch });
+  });
+  electron.ipcMain.handle("git:graph", async (_e, projectDir) => {
+    return gitGraph(projectDir);
+  });
+  electron.ipcMain.handle("git:status", async (_e, projectDir) => {
+    return gitStatus(projectDir);
+  });
+  electron.ipcMain.handle("git:listBranches", async (_e, projectDir) => {
+    return gitListBranches(projectDir);
+  });
+  electron.ipcMain.handle("git:createBranch", async (_e, projectDir, branchName) => {
+    return gitCreateBranch(projectDir, branchName);
+  });
+  electron.ipcMain.handle("git:switchBranch", async (_e, projectDir, branchName) => {
+    return gitSwitchBranch(projectDir, branchName);
+  });
+  electron.ipcMain.handle("git:currentBranch", async (_e, projectDir) => {
+    return getCurrentBranch(projectDir);
+  });
+  electron.ipcMain.handle("git:diff", async (_e, projectDir, oid1, oid2) => {
+    return gitDiff(projectDir, oid1, oid2);
+  });
+  electron.ipcMain.handle("git:revertFile", async (_e, projectDir, filepath) => {
+    return gitRevertFile(projectDir, filepath);
+  });
+  electron.ipcMain.handle("git:resetToCommit", async (_e, projectDir, oid) => {
+    return gitResetToCommit(projectDir, oid);
+  });
+  electron.ipcMain.handle("git:autoCommit", async (_e, projectDir, taskId, summary) => {
+    console.log("[gitIpc] autoCommit called: taskId=", taskId, "summary=", summary.slice(0, 50));
+    const result = await autoCommit(projectDir, { summary });
+    if (result) {
+      console.log("[gitIpc] autoCommit result:", result.shortOid, result.fileCount, "files");
+      createTask({
+        id: taskId,
+        sessionId: taskId,
+        projectDir,
+        title: summary.slice(0, 80)
+      });
+      const branch = await getCurrentBranch(projectDir);
+      createCheckpoint({
+        id: crypto.randomUUID(),
+        taskId,
+        commitOid: result.oid,
+        branch,
+        summary,
+        fileCount: result.fileCount
+      });
+      console.log("[gitIpc] checkpoint created on branch:", branch);
+    } else {
+      console.log("[gitIpc] autoCommit: no changes to commit");
+    }
+    return result;
+  });
+  electron.ipcMain.handle("checkpoint:createTask", async (_e, sessionId, projectDir, title) => {
+    return createTask({ id: crypto.randomUUID(), sessionId, projectDir, title });
+  });
+  electron.ipcMain.handle("checkpoint:updateTaskStatus", async (_e, id, status) => {
+    updateTaskStatus(id, status);
+  });
+  electron.ipcMain.handle("checkpoint:getTask", async (_e, id) => {
+    return getTask(id);
+  });
+  electron.ipcMain.handle("checkpoint:listTasks", async (_e, projectDir) => {
+    return listTasks(projectDir);
+  });
+  electron.ipcMain.handle("checkpoint:deleteTask", async (_e, id) => {
+    deleteTask(id);
+  });
+  electron.ipcMain.handle("checkpoint:listCheckpoints", async (_e, taskId) => {
+    return listCheckpoints(taskId);
+  });
+  electron.ipcMain.handle("checkpoint:getTaskWithCheckpoints", async (_e, taskId) => {
+    return getTaskWithCheckpoints(taskId);
+  });
+  electron.ipcMain.handle("checkpoint:listTasksWithCheckpoints", async (_e, projectDir) => {
+    return listTasksWithCheckpoints(projectDir);
+  });
+}
+function getExtensionsRoot() {
+  if (electron.app.isPackaged) {
+    return path.join(electron.app.getPath("userData"), "extensions");
+  }
+  return path.join(electron.app.getAppPath(), "..", "extensions");
+}
+function getStorePath() {
+  const root = getExtensionsRoot();
+  return path.join(root, ".extensions-store.json");
+}
+async function loadStore() {
+  const storePath = getStorePath();
+  try {
+    const raw = await promises.readFile(storePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return { enabled: {} };
+  }
+}
+async function saveStore(s) {
+  const storePath = getStorePath();
+  await promises.mkdir(path.dirname(storePath), { recursive: true });
+  await promises.writeFile(storePath, JSON.stringify(s, null, 2), "utf-8");
+}
+async function scanExtensions() {
+  const root = getExtensionsRoot();
+  const extStore = await loadStore();
+  const results = [];
+  if (!nodeFs.existsSync(root)) return results;
+  let entries;
+  try {
+    entries = await promises.readdir(root, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const extFolder = entry.name;
+    const extensionSubDir = path.join(root, extFolder, "extension");
+    const pkgJsonPath = path.join(extensionSubDir, "package.json");
+    if (!nodeFs.existsSync(pkgJsonPath)) continue;
+    try {
+      const raw = await promises.readFile(pkgJsonPath, "utf-8");
+      const pkg = JSON.parse(raw);
+      const id = `${pkg.publisher ?? "unknown"}.${pkg.name ?? extFolder}`;
+      const enabled = extStore.enabled[id] !== false;
+      results.push({
+        id,
+        name: pkg.name ?? extFolder,
+        displayName: pkg.displayName ?? pkg.name ?? extFolder,
+        version: pkg.version ?? "0.0.0",
+        publisher: pkg.publisher ?? "unknown",
+        description: pkg.description ?? "",
+        icon: pkg.icon ?? void 0,
+        categories: pkg.categories ?? [],
+        engines: pkg.engines,
+        main: pkg.main,
+        contributes: pkg.contributes,
+        enabled,
+        installedPath: path.join(root, extFolder),
+        extensionDir: extensionSubDir,
+        activationEvents: pkg.activationEvents ?? []
+      });
+    } catch {
+      continue;
+    }
+  }
+  return results;
+}
+async function installExtension(vsixPath) {
+  const root = getExtensionsRoot();
+  await promises.mkdir(root, { recursive: true });
+  const buffer = await promises.readFile(vsixPath);
+  const zipData = fflate.unzipSync(new Uint8Array(buffer));
+  let pkgRaw = null;
+  for (const [name2, data] of Object.entries(zipData)) {
+    if (name2 === "extension/package.json" || name2 === "package.json") {
+      pkgRaw = Buffer.from(data).toString("utf-8");
+      break;
+    }
+  }
+  if (!pkgRaw) {
+    throw new Error("Invalid VSIX: no package.json found");
+  }
+  const pkg = JSON.parse(pkgRaw);
+  const publisher = pkg.publisher ?? "unknown";
+  const name = pkg.name ?? "unknown";
+  const version = pkg.version ?? "0.0.0";
+  const extId = `${publisher}.${name}`;
+  const platform = process.platform;
+  const arch = process.arch;
+  const folderName = `${publisher}.${name}-${version}-${platform}-${arch}`;
+  const destDir = path.join(root, folderName);
+  await removeOldVersions(root, publisher, name);
+  await promises.mkdir(destDir, { recursive: true });
+  for (const [name2, data] of Object.entries(zipData)) {
+    let relPath = name2;
+    if (!relPath.startsWith("extension/")) {
+      relPath = "extension/" + relPath;
+    }
+    const outPath = path.join(destDir, relPath);
+    const arr = data;
+    if (arr.length === 0 && name2.endsWith("/")) {
+      await promises.mkdir(outPath, { recursive: true });
+    } else {
+      await promises.mkdir(path.dirname(outPath), { recursive: true });
+      await promises.writeFile(outPath, Buffer.from(arr));
+    }
+  }
+  const extStore = await loadStore();
+  extStore.enabled[extId] = true;
+  await saveStore(extStore);
+  const extensionSubDir = path.join(destDir, "extension");
+  const icon = pkg.icon ?? void 0;
+  return {
+    id: extId,
+    name: pkg.name ?? "unknown",
+    displayName: pkg.displayName ?? pkg.name ?? "unknown",
+    version: pkg.version ?? "0.0.0",
+    publisher,
+    description: pkg.description ?? "",
+    icon,
+    categories: pkg.categories ?? [],
+    engines: pkg.engines,
+    main: pkg.main,
+    contributes: pkg.contributes,
+    enabled: true,
+    installedPath: destDir,
+    extensionDir: extensionSubDir,
+    activationEvents: pkg.activationEvents ?? []
+  };
+}
+async function removeOldVersions(root, publisher, name) {
+  let entries;
+  try {
+    entries = await promises.readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const prefix = `${publisher}.${name}-`;
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name.startsWith(prefix)) {
+      await promises.rm(path.join(root, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+async function uninstallExtension(extensionId) {
+  getExtensionsRoot();
+  const extensions = await scanExtensions();
+  const ext = extensions.find((e) => e.id === extensionId);
+  if (!ext) throw new Error(`Extension not found: ${extensionId}`);
+  await promises.rm(ext.installedPath, { recursive: true, force: true });
+  const extStore = await loadStore();
+  delete extStore.enabled[extensionId];
+  await saveStore(extStore);
+}
+async function setExtensionEnabled(extensionId, enabled) {
+  const extStore = await loadStore();
+  extStore.enabled[extensionId] = enabled;
+  await saveStore(extStore);
+}
+async function getExtensionIcon(extensionId) {
+  const extensions = await scanExtensions();
+  const ext = extensions.find((e) => e.id === extensionId);
+  if (!ext || !ext.icon) return null;
+  const iconPath = path.join(ext.extensionDir, ext.icon);
+  if (!nodeFs.existsSync(iconPath)) {
+    const commonIcons = ["icon.png", "icon.svg", "logo.png", "images/icon.png"];
+    for (const ci of commonIcons) {
+      const p = path.join(ext.extensionDir, ci);
+      if (nodeFs.existsSync(p)) {
+        const buf2 = await promises.readFile(p);
+        const ext2 = p.split(".").pop()?.toLowerCase();
+        const mime2 = ext2 === "svg" ? "image/svg+xml" : `image/${ext2 === "png" ? "png" : "png"}`;
+        return `data:${mime2};base64,${buf2.toString("base64")}`;
+      }
+    }
+    return null;
+  }
+  const buf = await promises.readFile(iconPath);
+  const extn = ext.icon.split(".").pop()?.toLowerCase();
+  const mime = extn === "svg" ? "image/svg+xml" : `image/${extn === "png" ? "png" : "png"}`;
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+function registerExtensionHandlers(win) {
+  electron.ipcMain.handle("extensions:list", async () => {
+    return scanExtensions();
+  });
+  electron.ipcMain.handle("extensions:installFromDialog", async () => {
+    const result = await electron.dialog.showOpenDialog(win, {
+      title: "Install Extension",
+      filters: [
+        { name: "VSIX Extensions", extensions: ["vsix"] },
+        { name: "All Files", extensions: ["*"] }
+      ],
+      properties: ["openFile"]
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    const vsixPath = result.filePaths[0];
+    const ext = await installExtension(vsixPath);
+    return ext;
+  });
+  electron.ipcMain.handle("extensions:install", async (_e, vsixPath) => {
+    return installExtension(vsixPath);
+  });
+  electron.ipcMain.handle(
+    "extensions:uninstall",
+    async (_e, extensionId) => {
+      await uninstallExtension(extensionId);
+    }
+  );
+  electron.ipcMain.handle(
+    "extensions:setEnabled",
+    async (_e, extensionId, enabled) => {
+      await setExtensionEnabled(extensionId, enabled);
+    }
+  );
+  electron.ipcMain.handle(
+    "extensions:getIcon",
+    async (_e, extensionId) => {
+      return getExtensionIcon(extensionId);
+    }
+  );
+}
+function getLanIp() {
+  const nets = os.networkInterfaces();
+  const candidates = [];
+  const scoreName = (name) => {
+    const n = name.toLowerCase();
+    if (/ethernet|^eth\d|^en\d|无线|wi-fi|wlan|^wl/i.test(n)) return 0;
+    if (/本地|local area/i.test(n)) return 1;
+    if (/usb|bridge/i.test(n)) return 2;
+    if (/realtek|intel|broadcom|qualcomm|mediatek|marvell/i.test(n)) return 3;
+    return 4;
+  };
+  const scoreRange = (ip) => {
+    if (ip.startsWith("192.168.")) return 0;
+    if (ip.startsWith("10.")) return 1;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return 2;
+    if (ip.startsWith("169.254.")) return 5;
+    return 6;
+  };
+  for (const [ifName, iface] of Object.entries(nets)) {
+    if (!iface) continue;
+    if (/hyper-v|virtualbox|docker|wsl|loopback|vmware|vpn|tunnel|bluetooth|pseudo|vethernet|vbox|nat/i.test(ifName)) {
+      continue;
+    }
+    for (const net2 of iface) {
+      if (net2.family === "IPv4" && !net2.internal) {
+        const score = scoreName(ifName) + scoreRange(net2.address);
+        candidates.push({ address: net2.address, score });
+      }
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+  if (candidates.length === 0) {
+    for (const iface of Object.values(nets)) {
+      if (!iface) continue;
+      for (const net2 of iface) {
+        if (net2.family === "IPv4" && !net2.internal) return net2.address;
+      }
+    }
+    return null;
+  }
+  return candidates[0].address;
+}
 class StaticServer {
-  server = null;
-  port = 0;
-  appDir = null;
-  frontendDir = null;
+  constructor() {
+    this.server = null;
+    this.port = 0;
+    this.appDir = null;
+    this.frontendDir = null;
+  }
   async start(appDir, frontendDir) {
     const resolvedFrontendDir = path.normalize(frontendDir ?? path.join(appDir, "frontend"));
     if (this.server && this.appDir === appDir && this.frontendDir === resolvedFrontendDir) {
@@ -3725,7 +4774,7 @@ class StaticServer {
     this.frontendDir = resolvedFrontendDir;
     return new Promise((resolve, reject) => {
       const srv = http.createServer((req, res) => this.handleRequest(req, res));
-      srv.listen(0, "127.0.0.1", () => {
+      srv.listen(0, "0.0.0.0", () => {
         const addr = srv.address();
         if (!addr || typeof addr === "string") {
           reject(new Error("Failed to bind server"));
@@ -3751,6 +4800,12 @@ class StaticServer {
     if (!this.server || !this.port) return null;
     return `http://127.0.0.1:${this.port}`;
   }
+  getLanUrl() {
+    if (!this.server || !this.port) return null;
+    const ip = getLanIp();
+    if (!ip) return null;
+    return `http://${ip}:${this.port}`;
+  }
   handleRequest(req, res) {
     if (!this.appDir) {
       res.writeHead(503);
@@ -3774,20 +4829,20 @@ class StaticServer {
         res.end("Forbidden");
         return;
       }
-      if (!require$$0.existsSync(storageFilePath)) {
+      if (!nodeFs.existsSync(storageFilePath)) {
         res.writeHead(404);
         res.end("Not found");
         return;
       }
       try {
-        const stat = require$$0.statSync(storageFilePath);
+        const stat = nodeFs.statSync(storageFilePath);
         res.writeHead(200, {
           "Content-Type": getMimeType$1(storageFilePath),
           "Content-Length": stat.size,
           "Cache-Control": "no-cache",
           "Access-Control-Allow-Origin": "*"
         });
-        require$$0.createReadStream(storageFilePath).pipe(res);
+        nodeFs.createReadStream(storageFilePath).pipe(res);
       } catch {
         res.writeHead(500);
         res.end("Internal server error");
@@ -3802,18 +4857,17 @@ class StaticServer {
       res.end("Forbidden");
       return;
     }
-    if (!require$$0.existsSync(filePath)) {
+    if (!nodeFs.existsSync(filePath)) {
       if (!shouldSpaFallback(relPath)) {
         res.writeHead(404);
         res.end("Not found");
         return;
       }
       const indexPath = path.join(servingDir, "index.html");
-      if (require$$0.existsSync(indexPath)) {
+      if (nodeFs.existsSync(indexPath)) {
         this.serveFile(indexPath, res);
       } else {
-        res.writeHead(404);
-        res.end("Not found");
+        this.serveEmptyPage(req, res);
       }
       return;
     }
@@ -3821,10 +4875,10 @@ class StaticServer {
   }
   serveFile(filePath, res) {
     try {
-      const stat = require$$0.statSync(filePath);
+      const stat = nodeFs.statSync(filePath);
       if (stat.isDirectory()) {
         const indexPath = path.join(filePath, "index.html");
-        if (require$$0.existsSync(indexPath)) {
+        if (nodeFs.existsSync(indexPath)) {
           this.serveFile(indexPath, res);
         } else {
           res.writeHead(403);
@@ -3836,7 +4890,7 @@ class StaticServer {
       const isHtml = ext === ".html" || ext === ".htm";
       const contentType = getMimeType$1(filePath);
       if (isHtml) {
-        const raw = require$$0.readFileSync(filePath, "utf-8");
+        const raw = nodeFs.readFileSync(filePath, "utf-8");
         const bootstrapped = injectBootstrap(raw);
         const HIDE_SCROLLBAR = `<style>::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>`;
         const html = bootstrapped.includes("</head>") ? bootstrapped.replace("</head>", HIDE_SCROLLBAR + "</head>") : bootstrapped.includes("<body") ? bootstrapped.replace("<body", HIDE_SCROLLBAR + "<body") : HIDE_SCROLLBAR + bootstrapped;
@@ -3856,7 +4910,7 @@ class StaticServer {
         "Cache-Control": "no-cache",
         "Access-Control-Allow-Origin": "*"
       });
-      const stream = require$$0.createReadStream(filePath);
+      const stream = nodeFs.createReadStream(filePath);
       stream.pipe(res);
       stream.on("error", () => {
         res.end();
@@ -3866,21 +4920,59 @@ class StaticServer {
       res.end("Internal server error");
     }
   }
+  /** 前端目录尚无内容时，返回友好提示页面而非 404，根据 Accept-Language 切换语言 */
+  serveEmptyPage(req, res) {
+    const lang = (req.headers["accept-language"] ?? "").toLowerCase();
+    const isZh = lang.includes("zh");
+    const title = isZh ? "预览" : "Preview";
+    const heading = isZh ? "暂无前端资源" : "No Frontend Resources";
+    const desc = isZh ? "通过 OpenCode 向 AI 描述你的需求，即可自动生成应用" : "Describe your requirements to the AI via OpenCode to auto-generate your app";
+    const html = `<!DOCTYPE html>
+<html lang="${isZh ? "zh-CN" : "en"}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:#f8f9fa;color:#6b7280}
+.box{text-align:center;padding:40px}
+.icon{font-size:48px;margin-bottom:16px;opacity:.5}
+h2{font-size:16px;font-weight:500;margin-bottom:8px}
+p{font-size:13px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="box">
+<div class="icon">📂</div>
+<h2>${heading}</h2>
+<p>${desc}</p>
+</div>
+</body>
+</html>`;
+    const buf = Buffer.from(html, "utf-8");
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": buf.length,
+      "Cache-Control": "no-cache"
+    });
+    res.end(buf);
+  }
 }
 class Store {
   constructor(defaults) {
     this.defaults = defaults;
     const dir = path.join(electron.app.getPath("userData"), "devtool");
-    require$$0.mkdirSync(dir, { recursive: true });
+    nodeFs.mkdirSync(dir, { recursive: true });
     this.filePath = path.join(dir, "preferences.json");
     this.data = this.load();
   }
-  data;
-  filePath;
   load() {
     try {
-      if (require$$0.existsSync(this.filePath)) {
-        const raw = require$$0.readFileSync(this.filePath, "utf-8");
+      if (nodeFs.existsSync(this.filePath)) {
+        const raw = nodeFs.readFileSync(this.filePath, "utf-8");
         const parsed = JSON.parse(raw);
         return { ...this.defaults, ...parsed };
       }
@@ -3890,7 +4982,7 @@ class Store {
   }
   save() {
     try {
-      require$$0.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
+      nodeFs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
     } catch {
     }
   }
@@ -4039,6 +5131,7 @@ function createWindow() {
     }
     staticServer.stop();
     stopAgentSubscription();
+    closeCheckpointDb();
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -4061,6 +5154,8 @@ electron.app.whenReady().then(() => {
   registerServerHandlers();
   registerCaptureHandlers(win);
   registerAgentHandlers(win);
+  registerGitHandlers();
+  registerExtensionHandlers(win);
   electron.ipcMain.on("window:minimize", () => win.minimize());
   electron.ipcMain.on("window:maximize", () => {
     if (win.isMaximized()) win.unmaximize();

@@ -24,6 +24,10 @@ electron.contextBridge.exposeInMainWorld("devtool", {
     openExternal: (url) => electron.ipcRenderer.invoke("shell:openExternal", url),
     showItemInFolder: (path) => electron.ipcRenderer.invoke("shell:showItemInFolder", path)
   },
+  // File utils
+  fileUtils: {
+    getPathForFile: (file) => electron.webUtils.getPathForFile(file)
+  },
   // Package / folder management
   package: {
     openFolder: () => electron.ipcRenderer.invoke("package:openFolder"),
@@ -41,6 +45,11 @@ electron.contextBridge.exposeInMainWorld("devtool", {
       electron.ipcRenderer.on("package:manifestReload", handler);
       return () => electron.ipcRenderer.removeListener("package:manifestReload", handler);
     },
+    onWarningsChanged: (cb) => {
+      const handler = (_e, warnings) => cb(warnings);
+      electron.ipcRenderer.on("package:warningsChanged", handler);
+      return () => electron.ipcRenderer.removeListener("package:warningsChanged", handler);
+    },
     readImage: (appDir, relPath) => electron.ipcRenderer.invoke("package:readImage", appDir, relPath),
     saveImageFile: (appDir, relPath, dataUrl) => electron.ipcRenderer.invoke("package:saveImageFile", appDir, relPath, dataUrl),
     listImages: (appDir, subPath) => electron.ipcRenderer.invoke("package:listImages", appDir, subPath),
@@ -50,7 +59,8 @@ electron.contextBridge.exposeInMainWorld("devtool", {
       const handler = (_e, info) => cb(info);
       electron.ipcRenderer.on("package:assetsChanged", handler);
       return () => electron.ipcRenderer.removeListener("package:assetsChanged", handler);
-    }
+    },
+    build: (appDir) => electron.ipcRenderer.invoke("package:build", appDir)
   },
   // Execution
   execution: {
@@ -131,6 +141,12 @@ electron.contextBridge.exposeInMainWorld("devtool", {
       const handler = (_e, event) => cb(event);
       electron.ipcRenderer.on("agent:event", handler);
       return () => electron.ipcRenderer.removeListener("agent:event", handler);
+    },
+    answerQuestion: (answers) => electron.ipcRenderer.invoke("agent:answerQuestion", answers),
+    onQuestion: (cb) => {
+      const handler = (_e, data) => cb(data);
+      electron.ipcRenderer.on("agent:question", handler);
+      return () => electron.ipcRenderer.removeListener("agent:question", handler);
     }
   }
 });

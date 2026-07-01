@@ -45,6 +45,11 @@ electron.contextBridge.exposeInMainWorld("devtool", {
       electron.ipcRenderer.on("package:manifestReload", handler);
       return () => electron.ipcRenderer.removeListener("package:manifestReload", handler);
     },
+    onWarningsChanged: (cb) => {
+      const handler = (_e, warnings) => cb(warnings);
+      electron.ipcRenderer.on("package:warningsChanged", handler);
+      return () => electron.ipcRenderer.removeListener("package:warningsChanged", handler);
+    },
     readImage: (appDir, relPath) => electron.ipcRenderer.invoke("package:readImage", appDir, relPath),
     saveImageFile: (appDir, relPath, dataUrl) => electron.ipcRenderer.invoke("package:saveImageFile", appDir, relPath, dataUrl),
     listImages: (appDir, subPath) => electron.ipcRenderer.invoke("package:listImages", appDir, subPath),
@@ -88,11 +93,48 @@ electron.contextBridge.exposeInMainWorld("devtool", {
     clearAll: (dbPath) => electron.ipcRenderer.invoke("kv:clearAll", dbPath),
     importEntries: (dbPath, entries) => electron.ipcRenderer.invoke("kv:importEntries", dbPath, entries)
   },
+  // Git version management (isomorphic-git)
+  git: {
+    init: (projectDir) => electron.ipcRenderer.invoke("git:init", projectDir),
+    commit: (projectDir, message) => electron.ipcRenderer.invoke("git:commit", projectDir, message),
+    log: (projectDir, depth, branch) => electron.ipcRenderer.invoke("git:log", projectDir, depth, branch),
+    graph: (projectDir) => electron.ipcRenderer.invoke("git:graph", projectDir),
+    status: (projectDir) => electron.ipcRenderer.invoke("git:status", projectDir),
+    listBranches: (projectDir) => electron.ipcRenderer.invoke("git:listBranches", projectDir),
+    createBranch: (projectDir, branchName) => electron.ipcRenderer.invoke("git:createBranch", projectDir, branchName),
+    switchBranch: (projectDir, branchName) => electron.ipcRenderer.invoke("git:switchBranch", projectDir, branchName),
+    currentBranch: (projectDir) => electron.ipcRenderer.invoke("git:currentBranch", projectDir),
+    diff: (projectDir, oid1, oid2) => electron.ipcRenderer.invoke("git:diff", projectDir, oid1, oid2),
+    revertFile: (projectDir, filepath) => electron.ipcRenderer.invoke("git:revertFile", projectDir, filepath),
+    resetToCommit: (projectDir, oid) => electron.ipcRenderer.invoke("git:resetToCommit", projectDir, oid),
+    autoCommit: (projectDir, taskId, summary) => electron.ipcRenderer.invoke("git:autoCommit", projectDir, taskId, summary)
+  },
+  // Checkpoint storage (SQLite)
+  checkpoint: {
+    createTask: (sessionId, projectDir, title) => electron.ipcRenderer.invoke("checkpoint:createTask", sessionId, projectDir, title),
+    updateTaskStatus: (id, status) => electron.ipcRenderer.invoke("checkpoint:updateTaskStatus", id, status),
+    getTask: (id) => electron.ipcRenderer.invoke("checkpoint:getTask", id),
+    listTasks: (projectDir) => electron.ipcRenderer.invoke("checkpoint:listTasks", projectDir),
+    deleteTask: (id) => electron.ipcRenderer.invoke("checkpoint:deleteTask", id),
+    listCheckpoints: (taskId) => electron.ipcRenderer.invoke("checkpoint:listCheckpoints", taskId),
+    getTaskWithCheckpoints: (taskId) => electron.ipcRenderer.invoke("checkpoint:getTaskWithCheckpoints", taskId),
+    listTasksWithCheckpoints: (projectDir) => electron.ipcRenderer.invoke("checkpoint:listTasksWithCheckpoints", projectDir)
+  },
+  // Extensions (VS Code-compatible)
+  extensions: {
+    list: () => electron.ipcRenderer.invoke("extensions:list"),
+    installFromDialog: () => electron.ipcRenderer.invoke("extensions:installFromDialog"),
+    install: (vsixPath) => electron.ipcRenderer.invoke("extensions:install", vsixPath),
+    uninstall: (extensionId) => electron.ipcRenderer.invoke("extensions:uninstall", extensionId),
+    setEnabled: (extensionId, enabled) => electron.ipcRenderer.invoke("extensions:setEnabled", extensionId, enabled),
+    getIcon: (extensionId) => electron.ipcRenderer.invoke("extensions:getIcon", extensionId)
+  },
   // Static server for preview
   server: {
     start: (appDir, frontendDir) => electron.ipcRenderer.invoke("server:start", appDir, frontendDir),
     stop: () => electron.ipcRenderer.invoke("server:stop"),
-    getUrl: () => electron.ipcRenderer.invoke("server:getUrl")
+    getUrl: () => electron.ipcRenderer.invoke("server:getUrl"),
+    getLanUrl: () => electron.ipcRenderer.invoke("server:getLanUrl")
   },
   // Capture
   capture: {
@@ -127,6 +169,7 @@ electron.contextBridge.exposeInMainWorld("devtool", {
     listProviders: () => electron.ipcRenderer.invoke("agent:listProviders"),
     getConfig: () => electron.ipcRenderer.invoke("agent:getConfig"),
     setApiKey: (providerId, key) => electron.ipcRenderer.invoke("agent:setApiKey", providerId, key),
+    setProviderConfig: (providerId, config) => electron.ipcRenderer.invoke("agent:setProviderConfig", providerId, config),
     listCatalogProviders: () => electron.ipcRenderer.invoke("agent:listCatalogProviders"),
     getPrefs: () => electron.ipcRenderer.invoke("agent:getPrefs"),
     setPrefs: (prefs) => electron.ipcRenderer.invoke("agent:setPrefs", prefs),

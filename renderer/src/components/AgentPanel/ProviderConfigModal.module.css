@@ -1,0 +1,163 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.45);
+}
+
+.dialog {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  width: 420px;
+  max-height: 460px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.28);
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; flex-shrink: 0; min-height: 44px; }
+.headerLeft { display: flex; align-items: center; }
+.backBtn, .closeBtn {
+  width: 32px; height: 32px; border: none; background: none; color: var(--text-secondary);
+  cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.backBtn:hover, .closeBtn:hover { background: var(--bg-hover, rgba(128,128,128,0.12)); color: var(--text-primary); }
+.closeBtn { margin-left: auto; }
+
+/* ── Body ───────────────────────────────────────────────────── */
+.body { overflow-y: auto; flex: 1; padding: 2px 18px 18px; display: flex; flex-direction: column; gap: 22px; }
+
+/* ── Title ──────────────────────────────────────────────────── */
+.titleRow { display: flex; align-items: center; gap: 14px; padding: 0 4px; }
+.providerIcon {
+  width: 22px; height: 22px; border-radius: 5px; background: var(--bg-app);
+  border: 1.5px solid var(--border-color); display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0;
+}
+.providerTitle { font-size: 16px; font-weight: 500; color: var(--text-primary); }
+
+/* ── Description ────────────────────────────────────────────── */
+.desc { font-size: 14px; line-height: 1.55; color: var(--text-base, var(--text-secondary)); padding: 0 4px; }
+
+/* ── List ───────────────────────────────────────────────────── */
+.list { display: flex; flex-direction: column; }
+.listItem {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: none; background: none;
+  color: var(--text-primary); font-size: 14px; cursor: pointer; border-radius: 8px; text-align: left; transition: background 0.1s;
+}
+.listItem:hover { background: var(--bg-hover, rgba(128,128,128,0.08)); }
+.listDot {
+  width: 16px; height: 8px; border-radius: 1px; background: var(--bg-input, rgba(128,128,128,0.12));
+  border: 1px solid var(--border-color); flex-shrink: 0;
+}
+
+/* ── Form ───────────────────────────────────────────────────── */
+.form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.fieldLabel { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.fieldInput {
+  height: 36px; padding: 0 12px; font-size: 14px; border-radius: 8px;
+  border: 1px solid var(--border-color); background: var(--bg-input, rgba(0,0,0,0.04)); color: var(--text-primary); outline: none; width: 100%;
+}
+.fieldInput:focus { border-color: var(--color-primary); }
+.fieldInput::placeholder { color: var(--text-tertiary); }
+
+/* ── Error ──────────────────────────────────────────────────── */
+.error { font-size: 13px; color: #ff3b30; padding: 8px 12px; background: rgba(255,59,48,0.08); border-radius: 8px; }
+
+/* ── Submit ─────────────────────────────────────────────────── */
+.submit {
+  height: 36px; padding: 0 20px; font-size: 14px; font-weight: 500; border-radius: 8px;
+  border: none; background: var(--color-primary); color: #fff; cursor: pointer;
+}
+.submit:hover { opacity: 0.9; }
+.submit:disabled { opacity: 0.4; cursor: default; }
+
+/* ── OAuth ──────────────────────────────────────────────────── */
+.oauthBox { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--bg-app); border-radius: 8px; border: 1px solid var(--border-color); }
+.oauthIcon { color: var(--color-primary); display: flex; flex-shrink: 0; }
+.oauthText { font-size: 13px; color: var(--text-primary); }
+
+/* ── Provider info ────────────────────────────────────────────── */
+
+.providerInfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-app);
+  border-radius: 7px;
+}
+
+.providerInfoLabel {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.providerInfoValue {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-hover, rgba(128,128,128,0.1));
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: inherit;
+}
+
+/* ── Error ────────────────────────────────────────────────────── */
+
+.errorMsg {
+  font-size: 12px;
+  color: #ff3b30;
+  padding: 8px 12px;
+  background: rgba(255,59,48,0.08);
+  border-radius: 7px;
+}
+
+/* ── Actions ──────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.cancelBtn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.cancelBtn:hover {
+  color: var(--text-primary);
+}
+
+.submitBtn {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+}
+.submitBtn:hover {
+  opacity: 0.9;
+}
+.submitBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -1,8 +1,9 @@
-import { ipcMain, dialog, BrowserWindow } from "electron";
+import { ipcMain, dialog, BrowserWindow, app } from "electron";
 import { readFile, writeFile, access, readdir, mkdir, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { join, extname, dirname, normalize, basename, relative } from "path";
 import { zipSync, strToU8, type Zippable } from "fflate";
+import sharp from "sharp";
 import { store } from "../main";
 import { HotReloader } from "../watcher/hotReload";
 import { checkCocosBundle } from "../lib/app-manifest";
@@ -13,12 +14,15 @@ export type AppManifest = {
   id: string;
   name: string;
   version: string;
+  title?: string;
   description?: string;
   engine?: string;
-  entry: { frontend?: string; backend?: string };
+  entry: { frontend?: string; backend?: string; admin?: string };
   capabilities?: string[];
   permissions?: { scope: string; reason?: string }[];
   webPreview?: string;
+  logo?: string;
+  images?: string[];
 };
 
 export type PackageInfo = {
@@ -91,13 +95,22 @@ async function resolveEntries(dir: string, manifest: AppManifest): Promise<strin
   return result.length > 0 ? result : [backendEntry];
 }
 
+/** 检测目录是否未初始化（无任何项目文件），此时不应显示结构警告 */
+function isUninitializedDir(dir: string): boolean {
+  const indicators = ["package.json", "frontend", "backend"];
+  for (const name of indicators) {
+    if (existsSync(join(dir, name))) return false;
+  }
+  return true;
+}
+
 async function loadFolderInternal(dirPath: string): Promise<PackageInfo> {
   const found = await findManifest(dirPath);
   const resolvedDir = found?.resolvedDir ?? dirPath;
   const manifest: AppManifest = found?.manifest ?? {
     id: "",
     name: basename(dirPath),
-    version: "1.0.0",
+    version: app.getVersion(),
     entry: {},
   };
   const entries = await resolveEntries(resolvedDir, manifest);
@@ -113,20 +126,35 @@ async function loadFolderInternal(dirPath: string): Promise<PackageInfo> {
   const frontendDir = extname(frontendEntry) ? dirname(resolvedFrontendEntry) : resolvedFrontendEntry;
   const warnings: string[] = [];
 
-  if (!found) {
+  // 空目录（无清单且无任何项目文件）不显示结构警告
+  const skipWarnings = !found && isUninitializedDir(resolvedDir);
+
+  if (!found && !skipWarnings) {
     warnings.push("未找到清单文件，请在左侧填写应用信息后保存，将自动创建 app.manifest.json");
   }
 
   // ── 与上传校验保持一致的结构检查 ────────────────────────────────────
   // 1. webPreview / frontend 目录不存在
-  if (!existsSync(frontendDir)) {
+  if (!existsSync(frontendDir) && !skipWarnings) {
     warnings.push(`前端目录 "${frontendEntry}" 不存在，上传到平台时将被拒绝`);
   }
 
   // 2. Cocos 引擎应用缺少内置资源包（与 platform-api 上传校验规则一致）
-  if (manifest.engine === "cocos") {
+  if (manifest.engine === "cocos" && !skipWarnings) {
     const msg = checkCocosBundle(frontendDir, existsSync);
     if (msg) warnings.push(msg);
+  }
+
+  // 3. 打包必填字段校验（图标、名称、版本、描述）
+  if (found && !skipWarnings) {
+    if (!manifest.name?.trim()) warnings.push(`应用名称未设置，打包时将被拒绝`);
+    if (!manifest.version?.trim()) warnings.push(`版本号未设置，打包时将被拒绝`);
+    if (!manifest.description?.trim()) warnings.push(`应用描述未设置，打包时将被拒绝`);
+    if (!manifest.logo?.trim()) {
+      warnings.push(`应用图标未设置，打包时将被拒绝`);
+    } else if (!existsSync(join(resolvedDir, manifest.logo))) {
+      warnings.push(`应用图标文件 "${manifest.logo}" 不存在，打包时将被拒绝`);
+    }
   }
 
   return { dir: resolvedDir, frontendDir, manifest, entries, warnings };
@@ -209,13 +237,32 @@ export function registerPackageHandlers(win: BrowserWindow): void {
   ipcMain.handle("package:build", async (_e, appDir: string): Promise<{ outputPath: string } | null> => {
     const found = await findManifest(appDir);
     const manifest = found?.manifest;
+    const resolvedDir = found?.resolvedDir ?? appDir;
+
+    // ── 打包前必填字段校验 ──────────────────────────────────────────
+    const missing: string[] = [];
+    if (!manifest?.name?.trim()) missing.push("应用名称");
+    if (!manifest?.version?.trim()) missing.push("版本号");
+    if (!manifest?.description?.trim()) missing.push("应用描述");
+    if (!manifest?.logo?.trim()) {
+      missing.push("应用图标");
+    } else if (!existsSync(join(resolvedDir, manifest.logo))) {
+      missing.push(`应用图标（文件 "${manifest.logo}" 不存在）`);
+    }
+
+    if (missing.length > 0) {
+      throw new Error(`打包前请先完善应用信息，以下必填项缺失：\n${missing.map((m) => `  · ${m}`).join("\n")}`);
+    }
+
     const appName = manifest?.name ?? basename(appDir);
-    const version = manifest?.version ?? "1.0.0";
+    const version = manifest?.version ?? app.getVersion();
     const defaultName = `${appName}-${version}.zip`;
+    const distDir = join(appDir, "dist");
+    await mkdir(distDir, { recursive: true });
 
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: "保存应用压缩包",
-      defaultPath: join(appDir, defaultName),
+      defaultPath: join(distDir, defaultName),
       filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
     });
     if (canceled || !filePath) return null;
@@ -263,7 +310,22 @@ export function registerPackageHandlers(win: BrowserWindow): void {
     if (!filePath.startsWith(normalize(appDir))) throw new Error("Path traversal not allowed");
     await mkdir(dirname(filePath), { recursive: true });
     const base64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
-    await writeFile(filePath, Buffer.from(base64, "base64"));
+    const inputBuffer = Buffer.from(base64, "base64");
+    // Logo 图片裁剪并缩放到 128×128
+    const isLogo = basename(relPath).startsWith("logo");
+    const pipeline = sharp(inputBuffer);
+    if (isLogo) {
+      pipeline.resize(128, 128, { fit: "cover", position: "center" });
+    }
+    // 转为 WebP 无损压缩格式
+    const webpBuffer = await pipeline.webp({ lossless: true }).toBuffer();
+    // 强制使用 .webp 扩展名
+    const webpPath = filePath.replace(/\.[^.]+$/, ".webp");
+    await writeFile(webpPath, webpBuffer);
+    // 如果原扩展名不是 .webp，删除旧文件（可能由前端传入的非 webp 路径遗留）
+    if (webpPath !== filePath) {
+      try { await unlink(filePath); } catch { /* 文件可能不存在 */ }
+    }
   });
 
   ipcMain.handle("package:listImages", async (_e, appDir: string, subPath: string): Promise<string[]> => {
@@ -311,6 +373,7 @@ function startWatcher(appDir: string, win: BrowserWindow): void {
   hotReloader.start(appDir, {
     onFrontendChange: () => {
       win.webContents.send("package:hotReload", { type: "frontend" });
+      refreshWarnings(appDir, win);
     },
     onBackendChange: () => {
       win.webContents.send("package:hotReload", { type: "backend" });
@@ -319,9 +382,19 @@ function startWatcher(appDir: string, win: BrowserWindow): void {
       try {
         const pkg = await loadFolderInternal(appDir);
         win.webContents.send("package:manifestReload", pkg.manifest);
+        win.webContents.send("package:warningsChanged", pkg.warnings);
       } catch {
         // ignore parse errors during rapid typing
       }
     },
   });
+}
+
+async function refreshWarnings(appDir: string, win: BrowserWindow): Promise<void> {
+  try {
+    const pkg = await loadFolderInternal(appDir);
+    win.webContents.send("package:warningsChanged", pkg.warnings);
+  } catch {
+    // ignore
+  }
 }

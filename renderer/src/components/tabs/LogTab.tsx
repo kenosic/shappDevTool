@@ -1,6 +1,7 @@
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { useLogStore, type UiLogEntry } from "../../stores/logStore";
 import { useT } from "../../i18n";
+import { formatLogTime } from "../../utils/time";
 import styles from "./LogTab.module.css";
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -41,7 +42,7 @@ function LogRow({ entry }: { entry: UiLogEntry }) {
 
   return (
     <div className={styles.logLine}>
-      <span className={styles.ts}>{new Date(entry.ts).toISOString().slice(11, 23)}</span>
+      <span className={styles.ts}>{formatLogTime(entry.ts)}</span>
       <span className={styles.level} style={{ color: LEVEL_COLORS[level] }}>
         {level.toUpperCase().padEnd(5)}
       </span>
@@ -89,24 +90,6 @@ export default function LogTab() {
     return true;
   });
 
-  const handleSave = useCallback(async () => {
-    const text = entries
-      .filter((e) => e.uiType !== "separator")
-      .map((e) => {
-        if (e.uiType === "separator") return `--- ${e.label} ---`;
-        const ts = new Date(e.ts).toISOString().slice(11, 23);
-        return `[${ts}] [${e.level?.toUpperCase() ?? "LOG"}] ${e.message}`;
-      })
-      .join("\n");
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `devtool-logs-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [entries]);
-
   return (
     <div className={styles.root}>
       <div className={styles.toolbar}>
@@ -137,9 +120,6 @@ export default function LogTab() {
           />
           {t("log.lockBottom")}
         </label>
-        <button className={styles.actionBtn} onClick={handleSave} title={t("log.saveTitle")}>
-          {t("log.save")}
-        </button>
         <button className={styles.actionBtn} onClick={clear} title={t("log.clearTitle")}>
           {t("log.clear")}
         </button>

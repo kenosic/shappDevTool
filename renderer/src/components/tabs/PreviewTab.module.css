@@ -472,3 +472,83 @@
   color: var(--text-tertiary);
   font-size: 14px;
 }
+
+/* ── QR Code Modal ── */
+.qrOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qrModal {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.24);
+}
+
+.qrModalHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.qrModalTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.qrCloseBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: background 0.12s;
+}
+.qrCloseBtn:hover { background: var(--bg-app); color: var(--text-primary); }
+
+.qrImage {
+  width: 200px;
+  height: 200px;
+  border-radius: 8px;
+  border: 4px solid #fff;
+}
+
+.qrUrl {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  word-break: break-all;
+  text-align: center;
+}
+
+.qrTip {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+  max-width: 220px;
+  line-height: 1.5;
+}
+
+.qrNoIp {
+  font-size: 12px;
+  color: var(--color-danger, #e5534b);
+  text-align: center;
+  padding: 8px 0;
+}

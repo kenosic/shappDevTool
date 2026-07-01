@@ -10,6 +10,7 @@ type PackageState = {
 
   setCurrent: (pkg: PackageInfo | null) => void;
   setManifest: (manifest: PackageInfo["manifest"]) => void;
+  setWarnings: (warnings: string[]) => void;
   setRecentFolders: (folders: string[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -34,6 +35,8 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   },
   setManifest: (manifest) =>
     set((s) => s.current ? { current: { ...s.current, manifest } } : {}),
+  setWarnings: (warnings) =>
+    set((s) => s.current ? { current: { ...s.current, warnings } } : {}),
   setRecentFolders: (folders) => set({ recentFolders: folders }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),

@@ -333,7 +333,7 @@ var hasRequiredScheduler_production_min;
 function requireScheduler_production_min() {
   if (hasRequiredScheduler_production_min) return scheduler_production_min;
   hasRequiredScheduler_production_min = 1;
-  (function(exports$1) {
+  (function(exports) {
     function f(a, b) {
       var c2 = a.length;
       a.push(b);
@@ -366,12 +366,12 @@ function requireScheduler_production_min() {
     }
     if ("object" === typeof performance && "function" === typeof performance.now) {
       var l = performance;
-      exports$1.unstable_now = function() {
+      exports.unstable_now = function() {
         return l.now();
       };
     } else {
       var p = Date, q2 = p.now();
-      exports$1.unstable_now = function() {
+      exports.unstable_now = function() {
         return p.now() - q2;
       };
     }
@@ -407,7 +407,7 @@ function requireScheduler_production_min() {
             v2.callback = null;
             y = v2.priorityLevel;
             var e = d2(v2.expirationTime <= b);
-            b = exports$1.unstable_now();
+            b = exports.unstable_now();
             "function" === typeof e ? v2.callback = e : v2 === h2(r2) && k(r2);
             G(b);
           } else k(r2);
@@ -426,11 +426,11 @@ function requireScheduler_production_min() {
     }
     var N = false, O = null, L = -1, P = 5, Q = -1;
     function M() {
-      return exports$1.unstable_now() - Q < P ? false : true;
+      return exports.unstable_now() - Q < P ? false : true;
     }
     function R() {
       if (null !== O) {
-        var a = exports$1.unstable_now();
+        var a = exports.unstable_now();
         Q = a;
         var b = true;
         try {
@@ -459,31 +459,31 @@ function requireScheduler_production_min() {
     }
     function K(a, b) {
       L = D(function() {
-        a(exports$1.unstable_now());
+        a(exports.unstable_now());
       }, b);
     }
-    exports$1.unstable_IdlePriority = 5;
-    exports$1.unstable_ImmediatePriority = 1;
-    exports$1.unstable_LowPriority = 4;
-    exports$1.unstable_NormalPriority = 3;
-    exports$1.unstable_Profiling = null;
-    exports$1.unstable_UserBlockingPriority = 2;
-    exports$1.unstable_cancelCallback = function(a) {
+    exports.unstable_IdlePriority = 5;
+    exports.unstable_ImmediatePriority = 1;
+    exports.unstable_LowPriority = 4;
+    exports.unstable_NormalPriority = 3;
+    exports.unstable_Profiling = null;
+    exports.unstable_UserBlockingPriority = 2;
+    exports.unstable_cancelCallback = function(a) {
       a.callback = null;
     };
-    exports$1.unstable_continueExecution = function() {
+    exports.unstable_continueExecution = function() {
       A || z || (A = true, I(J));
     };
-    exports$1.unstable_forceFrameRate = function(a) {
+    exports.unstable_forceFrameRate = function(a) {
       0 > a || 125 < a ? console.error("forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported") : P = 0 < a ? Math.floor(1e3 / a) : 5;
     };
-    exports$1.unstable_getCurrentPriorityLevel = function() {
+    exports.unstable_getCurrentPriorityLevel = function() {
       return y;
     };
-    exports$1.unstable_getFirstCallbackNode = function() {
+    exports.unstable_getFirstCallbackNode = function() {
       return h2(r2);
     };
-    exports$1.unstable_next = function(a) {
+    exports.unstable_next = function(a) {
       switch (y) {
         case 1:
         case 2:
@@ -501,11 +501,11 @@ function requireScheduler_production_min() {
         y = c2;
       }
     };
-    exports$1.unstable_pauseExecution = function() {
+    exports.unstable_pauseExecution = function() {
     };
-    exports$1.unstable_requestPaint = function() {
+    exports.unstable_requestPaint = function() {
     };
-    exports$1.unstable_runWithPriority = function(a, b) {
+    exports.unstable_runWithPriority = function(a, b) {
       switch (a) {
         case 1:
         case 2:
@@ -524,8 +524,8 @@ function requireScheduler_production_min() {
         y = c2;
       }
     };
-    exports$1.unstable_scheduleCallback = function(a, b, c2) {
-      var d2 = exports$1.unstable_now();
+    exports.unstable_scheduleCallback = function(a, b, c2) {
+      var d2 = exports.unstable_now();
       "object" === typeof c2 && null !== c2 ? (c2 = c2.delay, c2 = "number" === typeof c2 && 0 < c2 ? d2 + c2 : d2) : c2 = d2;
       switch (a) {
         case 1:
@@ -548,8 +548,8 @@ function requireScheduler_production_min() {
       c2 > d2 ? (a.sortIndex = c2, f(t2, a), null === h2(r2) && a === h2(t2) && (B ? (E(L), L = -1) : B = true, K(H, c2 - d2))) : (a.sortIndex = e, f(r2, a), A || z || (A = true, I(J)));
       return a;
     };
-    exports$1.unstable_shouldYield = M;
-    exports$1.unstable_wrapCallback = function(a) {
+    exports.unstable_shouldYield = M;
+    exports.unstable_wrapCallback = function(a) {
       var b = y;
       return function() {
         var c2 = y;
@@ -7120,6 +7120,11 @@ const zh = {
   "tool.running": "执行中…",
   "tool.returnValue": "返回值",
   "tool.errorMessage": "[错误: {msg}]",
+  "tool.question": "问卷调查",
+  "tool.waitingInput": "等待输入",
+  "tool.interrupted": "已中断",
+  "tool.customAnswer": "自定义输入…",
+  "tool.submit": "提交",
   // ── sidebar ──
   "sidebar.appInfo": "应用信息",
   "sidebar.unnamedApp": "未命名应用",
@@ -7190,6 +7195,9 @@ const zh = {
   "menu.run": "运行",
   "menu.help": "帮助",
   "menu.openFolder": "打开文件夹…",
+  "menu.build": "打包…",
+  "menu.buildSuccess": "打包成功: {path}",
+  "menu.buildFailed": "打包失败",
   "menu.settings": "设置",
   "menu.exit": "退出",
   "menu.reload": "重新载入应用",
@@ -7226,6 +7234,9 @@ const zh = {
   "log.clearTitle": "清空日志",
   "log.clear": "🗑 清空",
   "log.empty": "暂无日志",
+  "log.copy": "📋 复制",
+  "log.copyTitle": "复制日志",
+  "log.copied": "✓ 已复制",
   // ── preview tab ──
   "preview.frontend": "前端",
   "preview.frontendTitle": "前端页面",
@@ -7417,6 +7428,11 @@ const en = {
   "tool.running": "Running…",
   "tool.returnValue": "Return value",
   "tool.errorMessage": "[Error: {msg}]",
+  "tool.question": "Questionnaire",
+  "tool.waitingInput": "Waiting for input",
+  "tool.interrupted": "Interrupted",
+  "tool.customAnswer": "Custom answer…",
+  "tool.submit": "Submit",
   // ── sidebar ──
   "sidebar.appInfo": "App Info",
   "sidebar.unnamedApp": "Unnamed app",
@@ -7487,6 +7503,9 @@ const en = {
   "menu.run": "Run",
   "menu.help": "Help",
   "menu.openFolder": "Open Folder…",
+  "menu.build": "Package App…",
+  "menu.buildSuccess": "Package saved: {path}",
+  "menu.buildFailed": "Packaging failed",
   "menu.settings": "Settings",
   "menu.exit": "Exit",
   "menu.reload": "Reload App",
@@ -7523,6 +7542,9 @@ const en = {
   "log.clearTitle": "Clear logs",
   "log.clear": "🗑 Clear",
   "log.empty": "No logs yet",
+  "log.copy": "📋 Copy",
+  "log.copyTitle": "Copy logs",
+  "log.copied": "✓ Copied",
   // ── preview tab ──
   "preview.frontend": "Frontend",
   "preview.frontendTitle": "Frontend page",
@@ -7694,29 +7716,39 @@ function localeTag(lang) {
   return lang === "zh" ? "zh-CN" : "en-US";
 }
 function partsToDisplay(msg2, isStreaming = false) {
-  let textContent = "";
-  const toolCalls = [];
+  const contentParts = [];
   for (const part of msg2.parts) {
     if (part.type === "text") {
-      textContent += part.text;
+      const last = contentParts[contentParts.length - 1];
+      if (last?.kind === "text") {
+        last.text += part.text ?? "";
+      } else {
+        contentParts.push({ kind: "text", text: part.text ?? "" });
+      }
     } else if (part.type === "tool") {
-      toolCalls.push({
+      contentParts.push({
+        kind: "tool",
         callID: part.callID ?? part.id ?? part.toolName,
         toolName: part.toolName,
         args: part.args,
         result: part.result,
         status: part.status
       });
+    } else if (part.type === "file") {
+      const attachment = {
+        name: part.filename ?? part.url.split("/").pop() ?? "file",
+        mime: part.mimeType,
+        url: part.url
+      };
+      const lastFile = contentParts.filter((p) => p.kind === "file").pop();
+      if (lastFile) {
+        lastFile.files.push(attachment);
+      } else {
+        contentParts.push({ kind: "file", files: [attachment] });
+      }
     }
   }
-  return {
-    id: msg2.id,
-    role: msg2.role,
-    textContent,
-    toolCalls,
-    isStreaming,
-    createdAt: msg2.createdAt
-  };
+  return { id: msg2.id, role: msg2.role, contentParts, isStreaming, createdAt: msg2.createdAt };
 }
 const _knownUserMsgIds = {};
 const useAgentStore = create$1((set, get) => ({
@@ -7727,8 +7759,8 @@ const useAgentStore = create$1((set, get) => ({
   streamingSessionId: null,
   panelVisible: true,
   panelWidth: 360,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   providers: [],
   configData: null,
   catalogProviders: [],
@@ -7737,6 +7769,7 @@ const useAgentStore = create$1((set, get) => ({
   initialized: false,
   serverStatus: "unknown",
   serverError: null,
+  pendingQuestion: null,
   // ── init ──────────────────────────────────────────────────────────
   init: async () => {
     if (get().initialized) return;
@@ -7770,6 +7803,12 @@ const useAgentStore = create$1((set, get) => ({
       return;
     }
     set({ serverStatus: "ready", serverError: null });
+    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
+    window.devtool.agent.subscribe().catch(() => {
+    });
+    window.devtool.agent.onQuestion((questionData) => {
+      set({ pendingQuestion: questionData });
+    });
     try {
       const sessions = await window.devtool.agent.listSessions();
       set({ sessions });
@@ -7783,18 +7822,19 @@ const useAgentStore = create$1((set, get) => ({
     try {
       const configData = await window.devtool.agent.getConfig();
       set({ configData });
-      const s = get();
-      if (s.selectedProvider === "anthropic" && configData.defaultProviderId) {
+      if (configData.defaultProviderId && configData.defaultModelId) {
         set({
           selectedProvider: configData.defaultProviderId,
           selectedModel: configData.defaultModelId
         });
+        window.devtool.agent.setPrefs({
+          selectedProvider: configData.defaultProviderId,
+          selectedModel: configData.defaultModelId
+        }).catch(() => {
+        });
       }
     } catch {
     }
-    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
-    window.devtool.agent.subscribe().catch(() => {
-    });
   },
   // ── createSession ─────────────────────────────────────────────────
   // ── newSession (lazy — no IPC until first message) ───────────────────
@@ -7846,8 +7886,10 @@ const useAgentStore = create$1((set, get) => ({
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
-      textContent: text2,
-      toolCalls: [],
+      contentParts: [
+        { kind: "text", text: text2 },
+        ...files && files.length > 0 ? [{ kind: "file", files }] : []
+      ],
       isStreaming: false,
       createdAt: Date.now()
     };
@@ -7855,8 +7897,7 @@ const useAgentStore = create$1((set, get) => ({
     const placeholder = {
       id: placeholderId,
       role: "assistant",
-      textContent: "",
-      toolCalls: [],
+      contentParts: [],
       isStreaming: true,
       createdAt: Date.now() + 1
     };
@@ -7951,16 +7992,38 @@ const useAgentStore = create$1((set, get) => ({
   // ── handleProjectChange ───────────────────────────────────────────
   // Called whenever the user opens a different project folder.
   // Restarts the OpenCode server with the new cwd, then reloads the
-  // session list (which is now filtered to that project by OpenCode).
+  // session list (which is now filtered to that project by OpenCode)
+  // and restores the most recent session so the user can continue
+  // where they left off.
   handleProjectChange: async (dir) => {
     await window.devtool.agent.setProject(dir).catch(() => {
     });
-    set({ sessions: [], activeSessionId: null, isStreaming: false, streamingSessionId: null });
+    set({ sessions: [], activeSessionId: null, messages: {}, isStreaming: false, streamingSessionId: null, pendingQuestion: null });
     await new Promise((r2) => setTimeout(r2, 800));
     try {
       const sessions = await window.devtool.agent.listSessions();
-      set({ sessions });
+      const lastSessionId = sessions[0]?.id ?? null;
+      set({ sessions, activeSessionId: lastSessionId });
+      if (lastSessionId) {
+        try {
+          const raw = await window.devtool.agent.getMessages(lastSessionId);
+          const display = raw.map((m) => partsToDisplay(m));
+          set((s) => ({ messages: { ...s.messages, [lastSessionId]: display } }));
+        } catch {
+        }
+      }
     } catch {
+    }
+  },
+  // ── answerQuestion ───────────────────────────────────────────────
+  answerQuestion: async (answers) => {
+    console.log("[AgentStore] answerQuestion called, answers:", JSON.stringify(answers).slice(0, 300));
+    set({ pendingQuestion: null });
+    try {
+      await window.devtool.agent.answerQuestion(answers);
+      console.log("[AgentStore] answerQuestion IPC completed successfully");
+    } catch (err) {
+      console.error("[AgentStore] answerQuestion IPC error:", err);
     }
   },
   // ── _handleEvent (SSE) ────────────────────────────────────────────
@@ -7982,10 +8045,32 @@ const useAgentStore = create$1((set, get) => ({
       } else if (info2.role === "assistant") {
         set((s) => {
           const msgs = s.messages[info2.sessionID] ?? [];
-          const idx = msgs.findIndex((m) => m.isStreaming);
-          if (idx === -1) return {};
+          if (msgs.some((m) => m.id === info2.id)) return {};
+          const streamingIdx = msgs.findIndex((m) => m.isStreaming);
           const updated = [...msgs];
-          updated[idx] = { ...updated[idx], id: info2.id };
+          if (streamingIdx >= 0) {
+            const cur = updated[streamingIdx];
+            if (cur.id.startsWith("streaming-")) {
+              updated[streamingIdx] = { ...cur, id: info2.id };
+            } else {
+              updated[streamingIdx] = { ...cur, isStreaming: false };
+              updated.push({
+                id: info2.id,
+                role: "assistant",
+                contentParts: [],
+                isStreaming: true,
+                createdAt: Date.now()
+              });
+            }
+          } else {
+            updated.push({
+              id: info2.id,
+              role: "assistant",
+              contentParts: [],
+              isStreaming: true,
+              createdAt: Date.now()
+            });
+          }
           return { messages: { ...s.messages, [info2.sessionID]: updated } };
         });
       }
@@ -8002,29 +8087,37 @@ const useAgentStore = create$1((set, get) => ({
         if (idx === -1) return {};
         const updated = [...msgs];
         const existing = updated[idx];
+        const contentParts = [...existing.contentParts];
         if (part.type === "text") {
           const append = typeof props.delta === "string" ? props.delta : part.text ?? "";
-          const newText = typeof props.delta === "string" ? existing.textContent + append : part.text ?? existing.textContent;
-          updated[idx] = { ...existing, id: messageId, textContent: newText };
+          const textIdx = contentParts.findIndex((p) => p.kind === "text");
+          if (textIdx >= 0) {
+            const tp = contentParts[textIdx];
+            const newText = typeof props.delta === "string" ? tp.text + append : part.text ?? tp.text;
+            contentParts[textIdx] = { kind: "text", text: newText };
+          } else {
+            contentParts.push({ kind: "text", text: append });
+          }
+          updated[idx] = { ...existing, id: messageId, contentParts };
         } else if (part.type === "tool") {
           const state = part.state;
-          const toolCalls = [...existing.toolCalls];
           const callID = part.callID ?? part.id ?? "";
           const toolName2 = part.tool ?? "";
-          const toolIdx = callID ? toolCalls.findIndex((t2) => t2.callID === callID) : -1;
           const entry = {
+            kind: "tool",
             callID,
             toolName: toolName2,
             args: state?.input ?? {},
             result: state?.output ?? state?.error,
             status: state?.status ?? "pending"
           };
+          const toolIdx = callID ? contentParts.findIndex((p) => p.kind === "tool" && p.callID === callID) : -1;
           if (toolIdx >= 0) {
-            toolCalls[toolIdx] = entry;
+            contentParts[toolIdx] = entry;
           } else {
-            toolCalls.push(entry);
+            contentParts.push(entry);
           }
-          updated[idx] = { ...existing, id: messageId, toolCalls };
+          updated[idx] = { ...existing, id: messageId, contentParts };
         }
         return { messages: { ...s.messages, [sessionId]: updated } };
       });
@@ -8069,19 +8162,21 @@ const useAgentStore = create$1((set, get) => ({
     }
   }
 }));
-const usePackageStore = create$1((set) => ({
+const usePackageStore = create$1((set, get) => ({
   current: null,
   recentFolders: [],
   isLoading: false,
   error: null,
   setCurrent: (pkg) => {
+    const prevDir = get().current?.dir;
     set({ current: pkg, error: null });
-    if (pkg?.dir) {
+    if (pkg?.dir && pkg.dir !== prevDir) {
       useAgentStore.getState().handleProjectChange(pkg.dir).catch(() => {
       });
     }
   },
   setManifest: (manifest) => set((s) => s.current ? { current: { ...s.current, manifest } } : {}),
+  setWarnings: (warnings2) => set((s) => s.current ? { current: { ...s.current, warnings: warnings2 } } : {}),
   setRecentFolders: (folders) => set({ recentFolders: folders }),
   setLoading: (loading2) => set({ isLoading: loading2 }),
   setError: (error2) => set({ error: error2 }),
@@ -8130,32 +8225,34 @@ const useExecutionStore = create$1((set) => ({
   setMockContext: (ctx) => set({ mockContext: ctx }),
   setSelectedEntry: (entry) => set({ selectedEntry: entry })
 }));
-const root$9 = "_root_1x9d6_1";
-const titlebar$1 = "_titlebar_1x9d6_19";
-const winControls$1 = "_winControls_1x9d6_37";
-const winBtn$1 = "_winBtn_1x9d6_55";
-const closeBtn$6 = "_closeBtn_1x9d6_87";
-const header$5 = "_header_1x9d6_99";
-const logoImage = "_logoImage_1x9d6_117";
-const title$2 = "_title_1x9d6_19";
-const subtitle = "_subtitle_1x9d6_145";
-const errorBanner = "_errorBanner_1x9d6_159";
-const body$6 = "_body_1x9d6_179";
-const openSection = "_openSection_1x9d6_197";
-const sectionLabel$1 = "_sectionLabel_1x9d6_215";
-const dropZone = "_dropZone_1x9d6_231";
-const dropIcon = "_dropIcon_1x9d6_265";
-const dropHint = "_dropHint_1x9d6_273";
-const openBtn = "_openBtn_1x9d6_285";
-const divider$1 = "_divider_1x9d6_325";
-const recentSection = "_recentSection_1x9d6_341";
-const sectionLabelRow = "_sectionLabelRow_1x9d6_361";
-const clearBtn$1 = "_clearBtn_1x9d6_375";
-const recentEmpty = "_recentEmpty_1x9d6_395";
-const recentList = "_recentList_1x9d6_413";
-const recentItem = "_recentItem_1x9d6_431";
-const recentIcon = "_recentIcon_1x9d6_469";
-const recentPath = "_recentPath_1x9d6_479";
+const root$9 = "_root_191cq_1";
+const titlebar$1 = "_titlebar_191cq_97";
+const winControls$1 = "_winControls_191cq_115";
+const winBtn$1 = "_winBtn_191cq_133";
+const closeBtn$6 = "_closeBtn_191cq_165";
+const header$5 = "_header_191cq_177";
+const logoImage = "_logoImage_191cq_195";
+const title$2 = "_title_191cq_97";
+const subtitle = "_subtitle_191cq_223";
+const errorBanner = "_errorBanner_191cq_237";
+const body$6 = "_body_191cq_257";
+const openSection = "_openSection_191cq_275";
+const sectionLabel$1 = "_sectionLabel_191cq_293";
+const dropZone = "_dropZone_191cq_309";
+const dropZoneActive = "_dropZoneActive_191cq_343";
+const dropZoneInvalid = "_dropZoneInvalid_191cq_353";
+const dropIcon = "_dropIcon_191cq_363";
+const dropHint = "_dropHint_191cq_371";
+const openBtn = "_openBtn_191cq_383";
+const divider$1 = "_divider_191cq_423";
+const recentSection = "_recentSection_191cq_439";
+const sectionLabelRow = "_sectionLabelRow_191cq_459";
+const clearBtn$1 = "_clearBtn_191cq_473";
+const recentEmpty = "_recentEmpty_191cq_493";
+const recentList = "_recentList_191cq_511";
+const recentItem = "_recentItem_191cq_529";
+const recentIcon = "_recentIcon_191cq_567";
+const recentPath = "_recentPath_191cq_577";
 const styles$k = {
   root: root$9,
   titlebar: titlebar$1,
@@ -8171,6 +8268,8 @@ const styles$k = {
   openSection,
   sectionLabel: sectionLabel$1,
   dropZone,
+  dropZoneActive,
+  dropZoneInvalid,
   dropIcon,
   dropHint,
   openBtn,
@@ -8193,6 +8292,73 @@ function WelcomePage() {
   const setRecentFolders = usePackageStore((s) => s.setRecentFolders);
   const [loading2, setLoading] = reactExports.useState(false);
   const [error2, setError] = reactExports.useState(null);
+  const [dragState, setDragState] = reactExports.useState("none");
+  function looksLikeDir(item2) {
+    if (item2.kind !== "file") return false;
+    const entry = item2.webkitGetAsEntry();
+    if (entry !== null) return entry.isDirectory;
+    return item2.type === "";
+  }
+  function handleDragEnter(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    const hasDir = Array.from(e.dataTransfer.items).some(looksLikeDir);
+    setDragState(hasDir ? "valid" : "invalid");
+  }
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragState("none");
+  }
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  async function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragState("none");
+    console.log("[drop] types:", Array.from(e.dataTransfer.types));
+    console.log("[drop] files.length:", e.dataTransfer.files.length);
+    Array.from(e.dataTransfer.files).forEach((f, i) => {
+      const fe = f;
+      console.log(`[drop] files[${i}] name=${f.name} size=${f.size} type="${f.type}" path=${fe.path ?? "(none)"}`);
+    });
+    console.log("[drop] items.length:", e.dataTransfer.items.length);
+    Array.from(e.dataTransfer.items).forEach((item2, i) => {
+      const entry = item2.webkitGetAsEntry();
+      console.log(`[drop] items[${i}] kind=${item2.kind} type="${item2.type}" entry=${entry ? entry.isDirectory ? "dir" : "file" : "null"}`);
+    });
+    const files = Array.from(e.dataTransfer.files);
+    const file = files[0];
+    if (!file) {
+      console.warn("[drop] No file found in dataTransfer");
+      return;
+    }
+    const filePath = window.devtool.fileUtils.getPathForFile(file);
+    console.log("[drop] getPathForFile:", filePath);
+    if (!filePath) {
+      console.warn("[drop] getPathForFile returned empty path");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const pkg = await window.devtool.package.loadFolder(filePath);
+      console.log("[drop] loadFolder succeeded:", pkg.dir);
+      setCurrent(pkg);
+      setRecentFolders(await window.devtool.package.getRecent());
+    } catch (err) {
+      console.error("[drop] loadFolder failed:", err);
+      const raw = err instanceof Error ? err.message : String(err);
+      setError(raw.replace(/^Error invoking remote method '[^']+': Error: /, "") || t2("common.openFolderFailed"));
+    } finally {
+      setLoading(false);
+    }
+  }
   async function handleOpenFolder() {
     setLoading(true);
     setError(null);
@@ -8243,19 +8409,29 @@ function WelcomePage() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.body, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.openSection, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.sectionLabel, children: t2("welcome.openSection") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.dropZone, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropIcon, children: "📁" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropHint, children: t2("welcome.dropHint") }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: styles$k.openBtn,
-              onClick: handleOpenFolder,
-              disabled: loading2,
-              children: loading2 ? t2("common.loading") : t2("welcome.selectFolder")
-            }
-          )
-        ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `${styles$k.dropZone} ${dragState === "valid" ? styles$k.dropZoneActive : dragState === "invalid" ? styles$k.dropZoneInvalid : ""}`,
+            onDragEnter: handleDragEnter,
+            onDragLeave: handleDragLeave,
+            onDragOver: handleDragOver,
+            onDrop: handleDrop,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropIcon, children: "📁" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropHint, children: t2("welcome.dropHint") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: styles$k.openBtn,
+                  onClick: handleOpenFolder,
+                  disabled: loading2,
+                  children: loading2 ? t2("common.loading") : t2("welcome.selectFolder")
+                }
+              )
+            ]
+          }
+        )
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.divider }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.recentSection, children: [
@@ -8377,6 +8553,7 @@ function Titlebar({
   onReload,
   onOpenSettings,
   onOpenAbout,
+  onBuild,
   sidebarVisible = true,
   onToggleSidebar,
   agentPanelVisible = false,
@@ -8478,6 +8655,8 @@ function Titlebar({
           /* @__PURE__ */ jsxRuntimeExports.jsx(MenuLabel, { children: t2("titlebar.recentOpen") }),
           recentFolders.slice(0, 6).map((dir) => /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderSmIcon, {}), label: dir.split(/[\\/]/).pop() ?? dir, onClick: () => handleOpenRecent(dir) }, dir))
         ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(PackageIcon, {}), label: t2("menu.build"), onClick: runMenuItem(onBuild), disabled: !pkg }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsIcon$1, {}), label: t2("menu.settings"), onClick: runMenuItem(onOpenSettings) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
@@ -8715,6 +8894,14 @@ function AgentIcon() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "8.5", cy: "5", r: "0.7", fill: "currentColor" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 7.5c.5.8 3.5.8 4 0", stroke: "currentColor", strokeWidth: "1.1", strokeLinecap: "round" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3.5 8.5C2 9.5 1.5 11 1.5 12.5h11c0-1.5-.5-3-2-4", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" })
+  ] });
+}
+function PackageIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "1.5", y: "4", width: "11", height: "8.5", rx: "1.2", stroke: "currentColor", strokeWidth: "1.2", fill: "none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 4V2.5A1.5 1.5 0 019 2.5V4", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", fill: "none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1.5", y1: "7", x2: "12.5", y2: "7", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "7", y1: "4", x2: "7", y2: "10", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
   ] });
 }
 const sidebar = "_sidebar_1t7l1_1";
@@ -9016,10 +9203,13 @@ function MediaEditor({
   t: t2
 }) {
   const [files, setFiles] = reactExports.useState([]);
+  const filesRef = reactExports.useRef([]);
+  filesRef.current = files;
   const [dataUrls, setDataUrls] = reactExports.useState({});
   const [initialized, setInitialized] = reactExports.useState(false);
   const dragIndexRef = reactExports.useRef(-1);
   const [dragOverIndex, setDragOverIndex] = reactExports.useState(-1);
+  const fileInputRef = reactExports.useRef(null);
   const discover = reactExports.useCallback(async () => {
     const result = [];
     for (const n of ["cover.png", "cover.jpg", "cover.jpeg", "cover.webp"]) {
@@ -9065,30 +9255,33 @@ function MediaEditor({
       const newPath = info2.role === "cover" ? `assets/cover.${ext}` : `assets/carousel/${info2.filename}`;
       const url = await window.devtool.package.readImage(appDir, newPath);
       if (!url) return;
-      setDataUrls((prev) => ({ ...prev, [newPath]: url }));
-      setFiles((prev) => {
-        let next;
-        if (info2.role === "cover") {
-          const idx = prev.findIndex((p) => p.startsWith("assets/cover."));
-          next = idx >= 0 ? prev.map((p, i) => i === idx ? newPath : p) : [newPath, ...prev];
-        } else {
-          next = prev.includes(newPath) ? prev : [...prev, newPath];
-        }
-        onImagesChange(next);
-        return next;
-      });
+      const prev = filesRef.current;
+      let next;
+      if (info2.role === "cover") {
+        const idx = prev.findIndex((p) => p.startsWith("assets/cover."));
+        next = idx >= 0 ? prev.map((p, i) => i === idx ? newPath : p) : [newPath, ...prev];
+      } else {
+        next = prev.includes(newPath) ? prev : [...prev, newPath];
+      }
+      setDataUrls((d2) => ({ ...d2, [newPath]: url }));
+      setFiles(next);
+      onImagesChange(next);
     });
   }, [appDir, onImagesChange]);
   const handleDragStart = (e, index2) => {
+    e.stopPropagation();
     dragIndexRef.current = index2;
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/x-internal", String(index2));
   };
   const handleDragOver = (e, index2) => {
+    e.stopPropagation();
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setDragOverIndex(index2);
   };
   const handleDrop = (e, dropIndex) => {
+    e.stopPropagation();
     e.preventDefault();
     const from = dragIndexRef.current;
     if (from < 0 || from === dropIndex) {
@@ -9103,24 +9296,31 @@ function MediaEditor({
     dragIndexRef.current = -1;
     setDragOverIndex(-1);
   };
-  const handleDragEnd = () => {
+  const handleDragEnd = (e) => {
+    e.stopPropagation();
     dragIndexRef.current = -1;
     setDragOverIndex(-1);
   };
-  const handleAdd = async () => {
-    const picked = await window.devtool.package.pickImageFiles(appDir, true);
-    if (!picked.length) return;
+  const handleAdd = () => {
+    fileInputRef.current?.click();
+  };
+  const handleFileInputChange = async (e) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
     const nextFiles = [...files];
     const nextUrls = { ...dataUrls };
-    for (const { dataUrl, filename } of picked) {
+    for (const file of Array.from(fileList)) {
+      const filename = file.name;
       const rel = `assets/carousel/${filename}`;
-      await window.devtool.package.saveImageFile(appDir, rel, dataUrl);
-      nextUrls[rel] = dataUrl;
+      const url = await fileToDataUrl(file);
+      await window.devtool.package.saveImageFile(appDir, rel, url);
+      nextUrls[rel] = url;
       if (!nextFiles.includes(rel)) nextFiles.push(rel);
     }
     setFiles(nextFiles);
     setDataUrls(nextUrls);
     onImagesChange(nextFiles);
+    e.target.value = "";
   };
   const handleDelete2 = async (index2) => {
     const path2 = files[index2];
@@ -9148,7 +9348,10 @@ function MediaEditor({
           draggable: true,
           onDragStart: (e) => handleDragStart(e, i),
           onDragOver: (e) => handleDragOver(e, i),
-          onDragLeave: () => setDragOverIndex(-1),
+          onDragLeave: (e) => {
+            e.stopPropagation();
+            setDragOverIndex(-1);
+          },
           onDrop: (e) => handleDrop(e, i),
           onDragEnd: handleDragEnd,
           children: [
@@ -9160,7 +9363,18 @@ function MediaEditor({
         f
       )),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.mediaAddGridBtn, onClick: handleAdd, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.carouselAddPlus, children: "+" }) })
-    ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        ref: fileInputRef,
+        type: "file",
+        accept: "image/*",
+        multiple: true,
+        style: { display: "none" },
+        onChange: handleFileInputChange
+      }
+    )
   ] });
 }
 function FieldRow({ label: label2, value, onChange, mono: mono2 = false, multiline = false }) {
@@ -9199,12 +9413,7 @@ function SidebarSection({ title: title2, badge: badge2, badgeVariant = "default"
   ] });
 }
 function AppIconSvg() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "22", height: "22", viewBox: "0 0 22 22", fill: "none", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "1", y: "4", width: "13", height: "10", rx: "1.5", stroke: "white", strokeWidth: "1.5" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 9h5M5 12h3", stroke: "white", strokeWidth: "1.5", strokeLinecap: "round" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "17", cy: "15", r: "4", fill: "white", fillOpacity: "0.25", stroke: "white", strokeWidth: "1.2" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M15.5 15l1 1 2-2", stroke: "white", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" })
-  ] });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 1024 1024", version: "1.1", xmlns: "http://www.w3.org/2000/svg", width: "26", height: "26", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M915.084916 719.854978 810.23287 719.854978 810.23287 614.985536c0-23.303752-17.479093-40.782845-40.782845-40.782845s-40.782845 17.479093-40.782845 40.782845l0 110.696148L612.144326 725.681684c-23.303752 0-40.782845 17.479093-40.782845 40.782845s17.479093 40.782845 40.782845 40.782845l110.696148 0 0 110.678752c0 23.303752 17.479093 40.782845 40.782845 40.782845s40.782845-17.479093 40.782845-40.782845L804.406165 807.247374 915.084916 807.247374c23.304775 0 40.782845-17.47807 40.782845-40.782845C961.694467 743.160777 938.390715 719.854978 915.084916 719.854978L915.084916 719.854978 915.084916 719.854978zM506.427586 825.749774 506.427586 825.749774 141.658835 825.749774c-13.524015 0-23.675212-10.151197-23.675212-23.710005L117.983623 139.732461c0-13.533224 10.151197-23.684422 23.675212-23.684422l646.381593 0c13.505595 0 23.657816 10.151197 23.657816 23.684422l0 357.988324 0 0 0 0c0 13.524015 10.169617 23.676236 23.711028 23.676236 13.522991 0 23.675212-10.152221 23.675212-23.676236l0 0 0 0L859.084485 116.049063c0-27.073612-23.675212-50.759057-50.758034-50.759057L117.9826 65.290005c-27.065426 0-50.758034 23.685445-50.758034 50.759057L67.224566 825.749774c0 27.048029 23.692608 50.740638 50.758034 50.740638L506.427586 876.490412l0 0c13.522991 0 23.675212-10.169617 23.675212-23.692608C530.101775 835.883575 519.949554 825.749774 506.427586 825.749774L506.427586 825.749774 506.427586 825.749774zM501.447155 708.202591c17.479093-34.95614 58.261938-58.261938 99.044784-58.261938l46.608527 0 0-52.43421c0-46.609551 29.131481-87.392396 69.913303-104.870466l0 0 0 0-58.260915-174.774559L454.838627 580.028373l-58.261938-93.218078L181.028495 708.202591 501.447155 708.202591 501.447155 708.202591 501.447155 708.202591zM396.577712 335.331301c0-34.94693-29.130458-64.078411-64.086597-64.078411s-64.087621 29.131481-64.087621 64.078411c0 34.957163 29.130458 64.087621 64.087621 64.087621S396.577712 370.288464 396.577712 335.331301L396.577712 335.331301 396.577712 335.331301zM396.577712 335.331301", fill: "white" }) });
 }
 function FolderIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -9750,10 +9959,20 @@ function PreviewTab() {
               target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: result.data, error: null }), "*");
             } else {
               target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: result.error }), "*");
+              useLogStore.getState().append({
+                level: "error",
+                ts: Date.now(),
+                message: `[RPC] ${method} → [${result.error?.code ?? "UNKNOWN"}] ${result.error?.message ?? "Unknown error"}`
+              });
             }
           }).catch((err) => {
             const target = iframeRef.current?.contentWindow;
             target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: { code: "EXECUTION_ERROR", message: err.message } }), "*");
+            useLogStore.getState().append({
+              level: "error",
+              ts: Date.now(),
+              message: `[RPC] ${method} → [EXECUTION_ERROR] ${err.message}`
+            });
           });
           break;
         }
@@ -10283,27 +10502,27 @@ function PlusIcon$2() {
 function MinusIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "2", y1: "7", x2: "12", y2: "7", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) });
 }
-const root$7 = "_root_ho80o_1";
-const toolbar$3 = "_toolbar_ho80o_15";
-const filters = "_filters_ho80o_35";
-const filterBtn = "_filterBtn_ho80o_45";
-const active$1 = "_active_ho80o_71";
-const autoScrollLabel = "_autoScrollLabel_ho80o_81";
-const spacer = "_spacer_ho80o_101";
-const searchInput = "_searchInput_ho80o_105";
-const actionBtn$1 = "_actionBtn_ho80o_135";
-const separator = "_separator_ho80o_193";
-const separatorLine = "_separatorLine_ho80o_211";
-const separatorLabel = "_separatorLabel_ho80o_223";
-const msgWrap = "_msgWrap_ho80o_235";
-const expandBtn = "_expandBtn_ho80o_251";
-const jsonBlock = "_jsonBlock_ho80o_277";
-const logArea = "_logArea_ho80o_305";
-const logLine = "_logLine_ho80o_323";
-const ts = "_ts_ho80o_343";
-const level = "_level_ho80o_353";
-const msg$1 = "_msg_ho80o_235";
-const empty$4 = "_empty_ho80o_375";
+const root$7 = "_root_1x08x_1";
+const toolbar$3 = "_toolbar_1x08x_15";
+const filters = "_filters_1x08x_35";
+const filterBtn = "_filterBtn_1x08x_45";
+const active$1 = "_active_1x08x_71";
+const autoScrollLabel = "_autoScrollLabel_1x08x_81";
+const spacer = "_spacer_1x08x_101";
+const searchInput = "_searchInput_1x08x_105";
+const actionBtn$1 = "_actionBtn_1x08x_135";
+const separator = "_separator_1x08x_193";
+const separatorLine = "_separatorLine_1x08x_211";
+const separatorLabel = "_separatorLabel_1x08x_223";
+const msgWrap = "_msgWrap_1x08x_235";
+const expandBtn = "_expandBtn_1x08x_251";
+const jsonBlock = "_jsonBlock_1x08x_277";
+const logArea = "_logArea_1x08x_305";
+const logLine = "_logLine_1x08x_325";
+const ts = "_ts_1x08x_345";
+const level = "_level_1x08x_357";
+const msg$1 = "_msg_1x08x_235";
+const empty$4 = "_empty_1x08x_383";
 const styles$d = {
   root: root$7,
   toolbar: toolbar$3,
@@ -10388,20 +10607,6 @@ function LogTab() {
     if (search2 && !e.message.toLowerCase().includes(search2.toLowerCase())) return false;
     return true;
   });
-  const handleSave = reactExports.useCallback(async () => {
-    const text2 = entries.filter((e) => e.uiType !== "separator").map((e) => {
-      if (e.uiType === "separator") return `--- ${e.label} ---`;
-      const ts2 = new Date(e.ts).toISOString().slice(11, 23);
-      return `[${ts2}] [${e.level?.toUpperCase() ?? "LOG"}] ${e.message}`;
-    }).join("\n");
-    const blob = new Blob([text2], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `devtool-logs-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [entries]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.root, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.toolbar, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.filters, children: ["all", "info", "warn", "error"].map((f) => /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -10435,7 +10640,6 @@ function LogTab() {
         ),
         t2("log.lockBottom")
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.actionBtn, onClick: handleSave, title: t2("log.saveTitle"), children: t2("log.save") }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.actionBtn, onClick: clear, title: t2("log.clearTitle"), children: t2("log.clear") })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.logArea, children: [
@@ -11488,6 +11692,7 @@ const html$3 = create({
     allowFullScreen: boolean,
     allowPaymentRequest: boolean,
     allowUserMedia: boolean,
+    alpha: boolean,
     alt: null,
     as: null,
     async: boolean,
@@ -11501,8 +11706,12 @@ const html$3 = create({
     checked: boolean,
     cite: null,
     className: spaceSeparated,
+    closedBy: null,
+    colorSpace: null,
     cols: number,
-    colSpan: null,
+    colSpan: number,
+    command: null,
+    commandFor: null,
     content: null,
     contentEditable: booleanish,
     controls: boolean,
@@ -11682,8 +11891,10 @@ const html$3 = create({
     seamless: boolean,
     selected: boolean,
     shadowRootClonable: boolean,
+    shadowRootCustomElementRegistry: boolean,
     shadowRootDelegatesFocus: boolean,
     shadowRootMode: null,
+    shadowRootSerializable: boolean,
     shape: null,
     size: number,
     sizes: null,
@@ -11820,8 +12031,11 @@ const html$3 = create({
     allowTransparency: null,
     autoCorrect: null,
     autoSave: null,
+    credentialless: boolean,
     disablePictureInPicture: boolean,
     disableRemotePlayback: boolean,
+    exportParts: commaSeparated,
+    part: spaceSeparated,
     prefix: null,
     property: null,
     results: number,
@@ -11873,6 +12087,7 @@ const svg$1 = create({
     markerEnd: "marker-end",
     markerMid: "marker-mid",
     markerStart: "marker-start",
+    maskType: "mask-type",
     navDown: "nav-down",
     navDownLeft: "nav-down-left",
     navDownRight: "nav-down-right",
@@ -12143,6 +12358,7 @@ const svg$1 = create({
     markerWidth: null,
     mask: null,
     maskContentUnits: null,
+    maskType: null,
     maskUnits: null,
     mathematical: null,
     max: null,
@@ -18520,6 +18736,18 @@ const SET = 6;
 const ERROR = 7;
 const BIGINT = 8;
 const env = typeof self === "object" ? self : globalThis;
+const guard = (name2, init) => {
+  switch (name2) {
+    case "Function":
+    case "SharedWorker":
+    case "Worker":
+    case "eval":
+    case "setInterval":
+    case "setTimeout":
+      throw new TypeError("unable to deserialize " + name2);
+  }
+  return new env[name2](init);
+};
 const deserializer = ($, _2) => {
   const as = (out, index2) => {
     $.set(index2, out);
@@ -18565,7 +18793,7 @@ const deserializer = ($, _2) => {
       }
       case ERROR: {
         const { name: name2, message } = value;
-        return as(new env[name2](message), index2);
+        return as(guard(name2, message), index2);
       }
       case BIGINT:
         return as(BigInt(value), index2);
@@ -18578,7 +18806,7 @@ const deserializer = ($, _2) => {
         return as(new DataView(buffer), value);
       }
     }
-    return as(new env[type](value), index2);
+    return as(guard(type, value), index2);
   };
   return unpair;
 };
@@ -46961,26 +47189,57 @@ const vscDarkPlus = {
     "zIndex": "0"
   }
 };
-const list = "_list_1ob26_1";
-const empty = "_empty_1ob26_21";
-const emptyText = "_emptyText_1ob26_45";
-const userBubble = "_userBubble_1ob26_69";
-const assistantBubble = "_assistantBubble_1ob26_95";
-const toolCard = "_toolCard_1ob26_213";
-const toolHeader = "_toolHeader_1ob26_229";
-const toolName = "_toolName_1ob26_251";
-const toolState = "_toolState_1ob26_263";
-const toolStateDone = "_toolStateDone_1ob26_277";
-const toolBody = "_toolBody_1ob26_287";
-const toolArgs = "_toolArgs_1ob26_299";
-const cursor = "_cursor_1ob26_319";
-const systemMsg = "_systemMsg_1ob26_349";
+const list = "_list_1tu1v_1";
+const empty = "_empty_1tu1v_21";
+const emptyText = "_emptyText_1tu1v_45";
+const userBubble = "_userBubble_1tu1v_69";
+const assistantMsg = "_assistantMsg_1tu1v_95";
+const toolCard = "_toolCard_1tu1v_201";
+const toolHeader = "_toolHeader_1tu1v_217";
+const toolName = "_toolName_1tu1v_239";
+const toolState = "_toolState_1tu1v_251";
+const toolStateDone = "_toolStateDone_1tu1v_265";
+const toolBody = "_toolBody_1tu1v_275";
+const toolArgs = "_toolArgs_1tu1v_287";
+const cursor = "_cursor_1tu1v_307";
+const systemMsg = "_systemMsg_1tu1v_337";
+const questionCard = "_questionCard_1tu1v_355";
+const questionHeader = "_questionHeader_1tu1v_371";
+const questionTitle = "_questionTitle_1tu1v_387";
+const questionStateRunning = "_questionStateRunning_1tu1v_401";
+const questionStateDone = "_questionStateDone_1tu1v_415";
+const questionStateStale = "_questionStateStale_1tu1v_429";
+const questionCardStale = "_questionCardStale_1tu1v_443";
+const questionOptionDisabled = "_questionOptionDisabled_1tu1v_451";
+const questionBody = "_questionBody_1tu1v_461";
+const questionItem = "_questionItem_1tu1v_475";
+const questionItemHeader = "_questionItemHeader_1tu1v_487";
+const questionItemText = "_questionItemText_1tu1v_503";
+const questionAnswerResult = "_questionAnswerResult_1tu1v_515";
+const questionOptions = "_questionOptions_1tu1v_537";
+const questionOption = "_questionOption_1tu1v_451";
+const questionOptionSelected = "_questionOptionSelected_1tu1v_589";
+const questionOptionLabel = "_questionOptionLabel_1tu1v_599";
+const questionOptionDesc = "_questionOptionDesc_1tu1v_611";
+const questionCustom = "_questionCustom_1tu1v_623";
+const questionCustomInput = "_questionCustomInput_1tu1v_631";
+const questionSubmit = "_questionSubmit_1tu1v_671";
+const questionSubmitActive = "_questionSubmitActive_1tu1v_697";
+const userMsgWrap = "_userMsgWrap_1tu1v_723";
+const userFiles = "_userFiles_1tu1v_741";
+const userFileChip = "_userFileChip_1tu1v_755";
+const userFileChipImage = "_userFileChipImage_1tu1v_781";
+const userFileThumb = "_userFileThumb_1tu1v_797";
+const userFileName = "_userFileName_1tu1v_813";
+const imagePreview$1 = "_imagePreview_1tu1v_829";
+const imagePreviewClose$1 = "_imagePreviewClose_1tu1v_851";
+const imagePreviewImg$1 = "_imagePreviewImg_1tu1v_895";
 const styles$7 = {
   list,
   empty,
   emptyText,
   userBubble,
-  assistantBubble,
+  assistantMsg,
   toolCard,
   toolHeader,
   toolName,
@@ -46989,7 +47248,38 @@ const styles$7 = {
   toolBody,
   toolArgs,
   cursor,
-  systemMsg
+  systemMsg,
+  questionCard,
+  questionHeader,
+  questionTitle,
+  questionStateRunning,
+  questionStateDone,
+  questionStateStale,
+  questionCardStale,
+  questionOptionDisabled,
+  questionBody,
+  questionItem,
+  questionItemHeader,
+  questionItemText,
+  questionAnswerResult,
+  questionOptions,
+  questionOption,
+  questionOptionSelected,
+  questionOptionLabel,
+  questionOptionDesc,
+  questionCustom,
+  questionCustomInput,
+  questionSubmit,
+  questionSubmitActive,
+  userMsgWrap,
+  userFiles,
+  userFileChip,
+  userFileChipImage,
+  userFileThumb,
+  userFileName,
+  imagePreview: imagePreview$1,
+  imagePreviewClose: imagePreviewClose$1,
+  imagePreviewImg: imagePreviewImg$1
 };
 const EMPTY_MESSAGES = [];
 function MessageList() {
@@ -47039,63 +47329,255 @@ function MessageList() {
 }
 function mergeAssistantMessages(messages2) {
   const result = [];
-  let pendingToolCalls = [];
+  let pendingParts = [];
   let pendingId = "";
   for (const msg2 of messages2) {
     if (msg2.role !== "assistant") {
-      if (pendingToolCalls.length > 0) {
-        result.push({ id: pendingId, role: "assistant", textContent: "", toolCalls: pendingToolCalls, isStreaming: false, createdAt: msg2.createdAt });
-        pendingToolCalls = [];
+      if (pendingParts.length > 0) {
+        result.push({ id: pendingId, role: "assistant", contentParts: pendingParts, isStreaming: false, createdAt: msg2.createdAt });
+        pendingParts = [];
         pendingId = "";
       }
       result.push(msg2);
       continue;
     }
-    pendingToolCalls = [...pendingToolCalls, ...msg2.toolCalls];
+    pendingParts = [...pendingParts, ...msg2.contentParts];
     if (!pendingId) pendingId = msg2.id;
-    if (msg2.textContent || msg2.isStreaming) {
-      result.push({ ...msg2, toolCalls: pendingToolCalls });
-      pendingToolCalls = [];
+    const hasText = msg2.contentParts.some((p) => p.kind === "text" && p.text.trim());
+    if (hasText || msg2.isStreaming) {
+      result.push({ ...msg2, contentParts: pendingParts });
+      pendingParts = [];
       pendingId = "";
     }
   }
-  if (pendingToolCalls.length > 0) {
-    result.push({ id: pendingId, role: "assistant", textContent: "", toolCalls: pendingToolCalls, isStreaming: false, createdAt: Date.now() });
+  if (pendingParts.length > 0) {
+    result.push({ id: pendingId, role: "assistant", contentParts: pendingParts, isStreaming: false, createdAt: Date.now() });
   }
   return result;
 }
+const mdComponents = {
+  code({ node: node2, className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className ?? "");
+    const isBlock = props.inline === false || Boolean(match);
+    return isBlock ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      highlighter,
+      {
+        style: vscDarkPlus,
+        language: match ? match[1] : "text",
+        PreTag: "div",
+        children: String(children).replace(/\n$/, "")
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className, ...props, children });
+  }
+};
 function MessageItem({ msg: msg2 }) {
+  const [previewImage, setPreviewImage] = reactExports.useState(null);
   if (msg2.role === "system") {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.systemMsg, children: msg2.textContent });
+    const textPart = msg2.contentParts.find((p) => p.kind === "text");
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.systemMsg, children: textPart?.text ?? "" });
   }
   if (msg2.role === "user") {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.userBubble, children: msg2.textContent });
+    const textPart = msg2.contentParts.find((p) => p.kind === "text");
+    const filePart = msg2.contentParts.find((p) => p.kind === "file");
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.userMsgWrap, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.userBubble, children: textPart?.text ?? "" }),
+      filePart && filePart.files.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.userFiles, children: filePart.files.map((f, i) => {
+        const isImage = f.mime.startsWith("image/");
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "span",
+          {
+            className: `${styles$7.userFileChip} ${isImage ? styles$7.userFileChipImage : ""}`,
+            ...isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => {
+              if (e.key === "Enter") setPreviewImage(f.url);
+            } } : {},
+            children: [
+              isImage && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$7.userFileThumb, src: f.url, alt: f.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.userFileName, children: f.name })
+            ]
+          },
+          i
+        );
+      }) }),
+      previewImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.imagePreview, onClick: () => setPreviewImage(null), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$7.imagePreviewClose, onClick: () => setPreviewImage(null), children: "×" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$7.imagePreviewImg, src: previewImage, alt: "preview", onClick: (e) => e.stopPropagation() })
+      ] })
+    ] });
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.assistantBubble, children: [
-    msg2.toolCalls.length > 0 && msg2.toolCalls.map((tc, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(ToolCallCard, { toolName: tc.toolName, args: tc.args, result: tc.result, status: tc.status }, tc.callID || i)),
-    msg2.textContent ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      Markdown,
-      {
-        remarkPlugins: [remarkGfm],
-        components: {
-          code({ node: node2, className, children, ...props }) {
-            const match = /language-(\w+)/.exec(className ?? "");
-            const isBlock = props.inline === false || Boolean(match);
-            return isBlock ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-              highlighter,
-              {
-                style: vscDarkPlus,
-                language: match ? match[1] : "text",
-                PreTag: "div",
-                children: String(children).replace(/\n$/, "")
-              }
-            ) : /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className, ...props, children });
-          }
-        },
-        children: msg2.textContent
+  const hasText = msg2.contentParts.some((p) => p.kind === "text" && p.text?.trim());
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.assistantMsg, children: [
+    msg2.contentParts.map((part, i) => {
+      if (part.kind === "tool") {
+        return part.toolName === "question" ? /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionCard, { args: part.args, result: part.result, status: part.status }, part.callID || i) : /* @__PURE__ */ jsxRuntimeExports.jsx(ToolCallCard, { toolName: part.toolName, args: part.args, result: part.result, status: part.status }, part.callID || i);
       }
-    ) : null,
-    msg2.isStreaming && !msg2.textContent && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.cursor })
+      if (part.kind === "text") {
+        return part.text ? /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { remarkPlugins: [remarkGfm], components: mdComponents, children: part.text }, i) : null;
+      }
+      return null;
+    }),
+    msg2.isStreaming && !hasText && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.cursor })
+  ] });
+}
+function QuestionCard({
+  args,
+  result,
+  status
+}) {
+  const t2 = useT();
+  const answerQuestion = useAgentStore((s) => s.answerQuestion);
+  const pendingQuestion = useAgentStore((s) => s.pendingQuestion);
+  const isLive = pendingQuestion !== null;
+  const questions = args.questions ?? [];
+  const [answers, setAnswers] = reactExports.useState(() => questions.map(() => []));
+  const [customTexts, setCustomTexts] = reactExports.useState(() => questions.map(() => ""));
+  const [submitted, setSubmitted] = reactExports.useState(false);
+  const [expanded, setExpanded] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    setAnswers((prev) => questions.map((_2, i) => prev[i] ?? []));
+    setCustomTexts((prev) => questions.map((_2, i) => prev[i] ?? ""));
+  }, [questions.length]);
+  const isDone = status === "completed" || status === "error";
+  const toggleOption = (qIdx, label2, multiple) => {
+    setAnswers((prev) => {
+      const next = [...prev];
+      const cur = next[qIdx] ?? [];
+      if (multiple) {
+        next[qIdx] = cur.includes(label2) ? cur.filter((l) => l !== label2) : [...cur, label2];
+      } else {
+        next[qIdx] = cur[0] === label2 ? [] : [label2];
+      }
+      return next;
+    });
+  };
+  const handleCustomChange = (qIdx, text2) => {
+    setCustomTexts((prev) => {
+      const n = [...prev];
+      n[qIdx] = text2;
+      return n;
+    });
+    setAnswers((prev) => {
+      const next = [...prev];
+      const optionLabels = new Set(questions[qIdx]?.options.map((o) => o.label) ?? []);
+      const withoutCustom = (next[qIdx] ?? []).filter((l) => optionLabels.has(l));
+      next[qIdx] = text2.trim() ? [...withoutCustom, text2.trim()] : withoutCustom;
+      return next;
+    });
+  };
+  const allAnswered = answers.every((a) => a.length > 0);
+  const handleSubmit = async () => {
+    console.log("[QuestionCard] handleSubmit, allAnswered =", allAnswered, "submitted =", submitted, "answers =", JSON.stringify(answers));
+    if (!allAnswered || submitted) return;
+    setSubmitted(true);
+    await answerQuestion(answers);
+  };
+  if (!isDone && !submitted && !isLive) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$7.questionCard} ${styles$7.questionCardStale}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: styles$7.questionHeader,
+          style: questions.length > 0 ? { cursor: "pointer" } : void 0,
+          onClick: questions.length > 0 ? () => setExpanded((v2) => !v2) : void 0,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateStale, children: t2("tool.interrupted") ?? "已中断" }),
+            questions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon, { open: expanded })
+          ]
+        }
+      ),
+      expanded && questions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionBody, children: questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
+        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
+        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionOptions, children: q2.options.map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$7.questionOption} ${styles$7.questionOptionDisabled}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionLabel, children: opt.label }),
+          opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionDesc, children: opt.description })
+        ] }, opt.label)) })
+      ] }, qIdx)) })
+    ] });
+  }
+  if (isDone || submitted) {
+    const canExpand = submitted ? questions.length > 0 : Boolean(result);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionCard, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: styles$7.questionHeader,
+          style: canExpand ? { cursor: "pointer" } : void 0,
+          onClick: canExpand ? () => setExpanded((v2) => !v2) : void 0,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateDone, children: t2("tool.completed") ?? "已完成" }),
+            canExpand && /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon, { open: expanded })
+          ]
+        }
+      ),
+      expanded && canExpand && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionBody, children: submitted && questions.length > 0 ? questions.map((q2, qIdx) => {
+        const ans = (answers[qIdx] ?? []).filter(Boolean);
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
+          q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionAnswerResult, children: ans.length > 0 ? ans.join("、") : "—" })
+        ] }, qIdx);
+      }) : result ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$7.toolArgs, children: result }) : null })
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionCard, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionHeader, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateRunning, children: t2("tool.waitingInput") ?? "等待输入" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionBody, children: [
+      questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
+        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
+        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionOptions, children: q2.options.map((opt) => {
+          const selected = answers[qIdx]?.includes(opt.label);
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              type: "button",
+              className: `${styles$7.questionOption} ${selected ? styles$7.questionOptionSelected : ""}`,
+              onClick: () => toggleOption(qIdx, opt.label, q2.multiple),
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionLabel, children: opt.label }),
+                opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionDesc, children: opt.description })
+              ]
+            },
+            opt.label
+          );
+        }) }),
+        q2.custom !== false && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionCustom, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "text",
+            className: styles$7.questionCustomInput,
+            placeholder: t2("tool.customAnswer") ?? "自定义输入…",
+            value: customTexts[qIdx] ?? "",
+            onChange: (e) => handleCustomChange(qIdx, e.target.value)
+          }
+        ) })
+      ] }, qIdx)),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          className: `${styles$7.questionSubmit} ${allAnswered ? styles$7.questionSubmitActive : ""}`,
+          disabled: !allAnswered,
+          onClick: handleSubmit,
+          children: t2("tool.submit") ?? "提交"
+        }
+      )
+    ] })
+  ] });
+}
+function QuestionIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "13", height: "13", viewBox: "0 0 13 13", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "6.5", cy: "6.5", r: "5.5", stroke: "currentColor", strokeWidth: "1.1" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 5a1.5 1.5 0 012.8.7c0 .8-.9 1.2-.9 2", stroke: "currentColor", strokeWidth: "1.1", strokeLinecap: "round" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "6.5", cy: "9.5", r: "0.6", fill: "currentColor" })
   ] });
 }
 function ToolCallCard({
@@ -47411,30 +47893,37 @@ function ModelPickerModal({ onClose }) {
 function CheckIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 6l3 3 5-5", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) });
 }
-const inputArea = "_inputArea_kf2sr_1";
-const attachList = "_attachList_kf2sr_19";
-const attachChip = "_attachChip_kf2sr_33";
-const attachChipName = "_attachChipName_kf2sr_59";
-const attachChipRemove = "_attachChipRemove_kf2sr_73";
-const inputBox = "_inputBox_kf2sr_97";
-const textarea = "_textarea_kf2sr_119";
-const inputBoxRow = "_inputBoxRow_kf2sr_161";
-const attachBtn = "_attachBtn_kf2sr_177";
-const sendBtn = "_sendBtn_kf2sr_215";
-const stopBtn = "_stopBtn_kf2sr_259";
-const toolbar = "_toolbar_kf2sr_307";
-const modeDropWrap = "_modeDropWrap_kf2sr_325";
-const modeDropBtn = "_modeDropBtn_kf2sr_333";
-const modeDropList = "_modeDropList_kf2sr_369";
-const modeDropItem = "_modeDropItem_kf2sr_395";
-const modeDropItemActive = "_modeDropItemActive_kf2sr_427";
-const modelBtn = "_modelBtn_kf2sr_437";
-const modelBtnLabel = "_modelBtnLabel_kf2sr_483";
-const modelBtnLoading = "_modelBtnLoading_kf2sr_497";
+const inputArea = "_inputArea_szvoi_1";
+const attachList = "_attachList_szvoi_19";
+const attachChip = "_attachChip_szvoi_33";
+const attachChipImage = "_attachChipImage_szvoi_59";
+const attachChipThumb = "_attachChipThumb_szvoi_77";
+const attachChipName = "_attachChipName_szvoi_93";
+const attachChipRemove = "_attachChipRemove_szvoi_107";
+const inputBox = "_inputBox_szvoi_131";
+const textarea = "_textarea_szvoi_153";
+const inputBoxRow = "_inputBoxRow_szvoi_195";
+const attachBtn = "_attachBtn_szvoi_211";
+const sendBtn = "_sendBtn_szvoi_249";
+const stopBtn = "_stopBtn_szvoi_293";
+const toolbar = "_toolbar_szvoi_341";
+const modeDropWrap = "_modeDropWrap_szvoi_359";
+const modeDropBtn = "_modeDropBtn_szvoi_367";
+const modeDropList = "_modeDropList_szvoi_403";
+const modeDropItem = "_modeDropItem_szvoi_429";
+const modeDropItemActive = "_modeDropItemActive_szvoi_461";
+const modelBtn = "_modelBtn_szvoi_471";
+const modelBtnLabel = "_modelBtnLabel_szvoi_517";
+const modelBtnLoading = "_modelBtnLoading_szvoi_531";
+const imagePreview = "_imagePreview_szvoi_547";
+const imagePreviewClose = "_imagePreviewClose_szvoi_569";
+const imagePreviewImg = "_imagePreviewImg_szvoi_613";
 const styles$5 = {
   inputArea,
   attachList,
   attachChip,
+  attachChipImage,
+  attachChipThumb,
   attachChipName,
   attachChipRemove,
   inputBox,
@@ -47451,7 +47940,10 @@ const styles$5 = {
   modeDropItemActive,
   modelBtn,
   modelBtnLabel,
-  modelBtnLoading
+  modelBtnLoading,
+  imagePreview,
+  imagePreviewClose,
+  imagePreviewImg
 };
 function AgentInput() {
   const t2 = useT();
@@ -47459,6 +47951,7 @@ function AgentInput() {
   const [modelPickerOpen, setModelPickerOpen] = reactExports.useState(false);
   const [modeDropOpen, setModeDropOpen] = reactExports.useState(false);
   const [attachments, setAttachments] = reactExports.useState([]);
+  const [previewImage, setPreviewImage] = reactExports.useState(null);
   const isStreaming = useAgentStore((s) => s.isStreaming);
   const sendMessage = useAgentStore((s) => s.sendMessage);
   const abortStreaming = useAgentStore((s) => s.abortStreaming);
@@ -47504,6 +47997,35 @@ function AgentInput() {
       handleSend();
     }
   };
+  const handlePaste = reactExports.useCallback(async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageItems = [];
+    for (let i = 0; i < items.length; i++) {
+      const item2 = items[i];
+      if (item2.type.startsWith("image/")) {
+        imageItems.push(item2);
+      }
+    }
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    const newAttachments = [];
+    for (const item2 of imageItems) {
+      const file = item2.getAsFile();
+      if (!file) continue;
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.type.split("/")[1] ?? "png";
+      const name2 = file.name || `paste-${Date.now()}.${ext}`;
+      newAttachments.push({ name: name2, mime: file.type, url: dataUrl });
+    }
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
   reactExports.useEffect(() => {
     if (!modeDropOpen) return;
     const handler = (e) => {
@@ -47514,18 +48036,35 @@ function AgentInput() {
     return () => document.removeEventListener("mousedown", handler);
   }, [modeDropOpen]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputArea, children: [
-    attachments.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.attachList, children: attachments.map((f, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$5.attachChip, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.attachChipName, children: f.name }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
+    attachments.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.attachList, children: attachments.map((f, i) => {
+      const isImage = f.mime.startsWith("image/");
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "span",
         {
-          className: styles$5.attachChipRemove,
-          onClick: () => setAttachments((prev) => prev.filter((_2, j2) => j2 !== i)),
-          title: t2("common.remove"),
-          children: "×"
-        }
-      )
-    ] }, i)) }),
+          className: `${styles$5.attachChip} ${isImage ? styles$5.attachChipImage : ""}`,
+          ...isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => {
+            if (e.key === "Enter") setPreviewImage(f.url);
+          } } : {},
+          children: [
+            isImage && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$5.attachChipThumb, src: f.url, alt: f.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.attachChipName, children: f.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: styles$5.attachChipRemove,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  setAttachments((prev) => prev.filter((_2, j2) => j2 !== i));
+                },
+                title: t2("common.remove"),
+                children: "×"
+              }
+            )
+          ]
+        },
+        i
+      );
+    }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputBox, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "textarea",
@@ -47535,6 +48074,7 @@ function AgentInput() {
           value: text2,
           onChange: handleChange,
           onKeyDown: handleKeyDown,
+          onPaste: handlePaste,
           placeholder: t2("agent.placeholder"),
           rows: 2,
           disabled: isStreaming && text2 === ""
@@ -47590,7 +48130,11 @@ function AgentInput() {
         }
       )
     ] }),
-    modelPickerOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(ModelPickerModal, { onClose: () => setModelPickerOpen(false) })
+    modelPickerOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(ModelPickerModal, { onClose: () => setModelPickerOpen(false) }),
+    previewImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.imagePreview, onClick: () => setPreviewImage(null), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.imagePreviewClose, onClick: () => setPreviewImage(null), children: "×" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$5.imagePreviewImg, src: previewImage, alt: "preview", onClick: (e) => e.stopPropagation() })
+    ] })
   ] });
 }
 function ArrowUpIcon() {
@@ -47707,6 +48251,7 @@ function MainLayout() {
   const current = usePackageStore((s) => s.current);
   const agentPanelVisible = useAgentStore((s) => s.panelVisible);
   const toggleAgentPanel = useAgentStore((s) => s.togglePanel);
+  const showToast = useToastStore((s) => s.show);
   const handleReload = reactExports.useCallback(async () => {
     if (!current) return;
     try {
@@ -47718,6 +48263,19 @@ function MainLayout() {
   const handleOpenFolder = reactExports.useCallback(async () => {
     setRecentFolders(await window.devtool.package.getRecent());
   }, [setRecentFolders]);
+  const handleBuild = reactExports.useCallback(async () => {
+    if (!current) return;
+    try {
+      const result = await window.devtool.package.build(current.dir);
+      if (result) {
+        showToast(t2("menu.buildSuccess", { path: result.outputPath }), "success");
+        window.devtool.shell.showItemInFolder(result.outputPath);
+      }
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      showToast(raw.replace(/^Error invoking remote method '[^']+': Error: /, "") || t2("menu.buildFailed"), "error");
+    }
+  }, [current, showToast, t2]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$3.root, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       Titlebar,
@@ -47726,6 +48284,7 @@ function MainLayout() {
         onReload: handleReload,
         onOpenSettings: () => setSettingsOpen(true),
         onOpenAbout: () => setAboutOpen(true),
+        onBuild: handleBuild,
         sidebarVisible,
         onToggleSidebar: () => setSidebarVisible((v2) => !v2),
         agentPanelVisible,
@@ -47910,23 +48469,14 @@ function UpdateBanner() {
   return null;
 }
 const root$1 = "_root_mwj0r_1";
-const dragOverlay = "_dragOverlay_mwj0r_19";
-const dragInvalid = "_dragInvalid_mwj0r_45";
-const dragHint = "_dragHint_mwj0r_55";
-const dragIcon = "_dragIcon_mwj0r_77";
-const dragText = "_dragText_mwj0r_85";
 const styles = {
-  root: root$1,
-  dragOverlay,
-  dragInvalid,
-  dragHint,
-  dragIcon,
-  dragText
+  root: root$1
 };
 function App() {
   const t2 = useT();
   const current = usePackageStore((s) => s.current);
-  const setCurrent = usePackageStore((s) => s.setCurrent);
+  usePackageStore((s) => s.setCurrent);
+  const setWarnings = usePackageStore((s) => s.setWarnings);
   const setRecentFolders = usePackageStore((s) => s.setRecentFolders);
   const appendLog = useLogStore((s) => s.append);
   const setExecStatus = useExecutionStore((s) => s.setStatus);
@@ -47954,6 +48504,10 @@ function App() {
     });
     return unsub;
   }, [current, appendLog]);
+  reactExports.useEffect(() => {
+    if (!current) return;
+    return window.devtool.package.onWarningsChanged(setWarnings);
+  }, [current, setWarnings]);
   const isInitialMount = reactExports.useRef(true);
   reactExports.useEffect(() => {
     if (isInitialMount.current) {
@@ -47966,68 +48520,11 @@ function App() {
       window.devtool.window.enterWelcome();
     }
   }, [current]);
-  const [dragState, setDragState] = reactExports.useState("none");
-  const dragCounterRef = React.useRef(0);
-  const handleDragEnter = reactExports.useCallback((e) => {
-    e.preventDefault();
-    dragCounterRef.current++;
-    const items = Array.from(e.dataTransfer.items);
-    const hasDir = items.some((i) => i.kind === "file" && i.webkitGetAsEntry()?.isDirectory);
-    setDragState(hasDir ? "valid" : "invalid");
-  }, []);
-  const handleDragLeave = reactExports.useCallback((e) => {
-    e.preventDefault();
-    dragCounterRef.current--;
-    if (dragCounterRef.current <= 0) {
-      dragCounterRef.current = 0;
-      setDragState("none");
-    }
-  }, []);
-  const handleDragOver = reactExports.useCallback((e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
-  const handleDrop = reactExports.useCallback(
-    async (e) => {
-      e.preventDefault();
-      dragCounterRef.current = 0;
-      setDragState("none");
-      const items = Array.from(e.dataTransfer.items);
-      const dirItem = items.find(
-        (i) => i.kind === "file" && i.webkitGetAsEntry()?.isDirectory
-      );
-      if (!dirItem) return;
-      const file = dirItem.getAsFile();
-      if (!file?.path) return;
-      try {
-        const pkg = await window.devtool.package.loadFolder(file.path);
-        setCurrent(pkg);
-        setRecentFolders(await window.devtool.package.getRecent());
-      } catch (err) {
-        console.error(err);
-      }
-    },
-    [setCurrent, setRecentFolders]
-  );
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "div",
-    {
-      className: styles.root,
-      onDragEnter: handleDragEnter,
-      onDragLeave: handleDragLeave,
-      onDragOver: handleDragOver,
-      onDrop: handleDrop,
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(UpdateBanner, {}),
-        current ? /* @__PURE__ */ jsxRuntimeExports.jsx(MainLayout, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(WelcomePage, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(ToastContainer, {}),
-        dragState !== "none" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles.dragOverlay} ${dragState === "invalid" ? styles.dragInvalid : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles.dragHint, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles.dragIcon, children: dragState === "valid" ? "📁" : "⚠️" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles.dragText, children: dragState === "valid" ? t2("app.dropValid") : t2("app.dropInvalid") })
-        ] }) })
-      ]
-    }
-  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(UpdateBanner, {}),
+    current ? /* @__PURE__ */ jsxRuntimeExports.jsx(MainLayout, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(WelcomePage, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ToastContainer, {})
+  ] });
 }
 const root = document.getElementById("root");
 clientExports.createRoot(root).render(/* @__PURE__ */ jsxRuntimeExports.jsx(App, {}));

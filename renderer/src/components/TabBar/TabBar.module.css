@@ -29,3 +29,44 @@
   border-bottom-color: var(--color-primary);
   font-weight: 600;
 }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--color-danger);
+  border-radius: 8px;
+  vertical-align: top;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.collapseBtn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.collapseBtn:hover {
+  background: var(--bg-hover, #e8e8e8);
+  color: var(--text-primary);
+}

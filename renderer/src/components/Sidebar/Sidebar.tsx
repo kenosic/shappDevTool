@@ -69,6 +69,16 @@ export default function Sidebar() {
     [scheduleSave]
   );
 
+  // 截图保存为 logo 时自动更新清单中的 logo 字段
+  useEffect(() => {
+    if (!window.devtool.package.onAssetsChanged) return;
+    return window.devtool.package.onAssetsChanged((info) => {
+      if (info.role === "logo" && info.appDir === pkg?.dir) {
+        update({ logo: "assets/logo.webp" });
+      }
+    });
+  }, [pkg?.dir, update]);
+
   if (!pkg || !draft) return null;
 
   return (
@@ -182,17 +192,6 @@ export default function Sidebar() {
         </div>
       </SidebarSection>
 
-      {/* Warnings */}
-      {pkg.warnings && pkg.warnings.length > 0 && (
-        <SidebarSection title={t("sidebar.warnings")} badge={String(pkg.warnings.length)} badgeVariant="warn" defaultOpen>
-          <ul className={styles.warnList}>
-            {pkg.warnings.map((w, i) => (
-              <li key={i} className={styles.warnItem}>{w}</li>
-            ))}
-          </ul>
-        </SidebarSection>
-      )}
-
       <div className={styles.spacer} />
       <div className={styles.footer}>
         <button className={styles.footerBtn} onClick={() => window.devtool.shell.showItemInFolder(pkg.dir)}>
@@ -221,8 +220,7 @@ function LogoAvatar({ appDir, logo, onLogoChange }: {
   const handlePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-    const relPath = `assets/logo.${ext}`;
+    const relPath = "assets/logo.webp";
     const url = await fileToDataUrl(file);
     await window.devtool.package.saveImageFile(appDir, relPath, url);
     setDataUrl(url);
@@ -303,10 +301,10 @@ function MediaEditor({
   useEffect(() => {
     return window.devtool.package.onAssetsChanged(async (info) => {
       if (info.appDir !== appDir) return;
-      const ext = info.filename.split(".").pop()?.toLowerCase() || "png";
-      const newPath = info.role === "cover"
-        ? `assets/cover.${ext}`
-        : `assets/carousel/${info.filename}`;
+      // logo 由外层 Sidebar 处理，不加入媒体网格
+      if (info.role === "logo") return;
+      // 使用主进程返回的实际保存路径（已转为 .webp）
+      const newPath = info.relPath;
       const url = await window.devtool.package.readImage(appDir, newPath);
       if (!url) return;
       // Compute next synchronously using the ref (avoids setState-during-render)
@@ -367,8 +365,9 @@ function MediaEditor({
     const nextFiles = [...files];
     const nextUrls = { ...dataUrls };
     for (const file of Array.from(fileList)) {
-      const filename = file.name;
-      const rel = `assets/carousel/${filename}`;
+      // 统一转为 .webp 扩展名（主进程 saveImageFile 会自动转换为 WebP 无损格式）
+      const webpName = file.name.replace(/\.[^.]+$/, ".webp");
+      const rel = `assets/carousel/${webpName}`;
       const url = await fileToDataUrl(file);
       await window.devtool.package.saveImageFile(appDir, rel, url);
       nextUrls[rel] = url;

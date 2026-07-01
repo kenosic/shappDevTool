@@ -14,6 +14,8 @@ import { registerKvHandlers } from "./ipc/kv";
 import { registerServerHandlers } from "./ipc/server";
 import { registerCaptureHandlers } from "./ipc/capture";
 import { registerAgentHandlers, stopAgentSubscription } from "./ipc/agent";
+import { registerGitHandlers, closeCheckpointDb } from "./ipc/gitIpc";
+import { registerExtensionHandlers } from "./ipc/extensions";
 import { StaticServer } from "./server/static";
 import { Store } from "./store";
 import { initUpdater } from "./updater";
@@ -136,6 +138,7 @@ function createWindow() {
     }
     staticServer.stop();
     stopAgentSubscription();
+    closeCheckpointDb();
   });
 
   mainWindow.on("closed", () => {
@@ -166,6 +169,8 @@ app.whenReady().then(() => {
   registerServerHandlers();
   registerCaptureHandlers(win);
   registerAgentHandlers(win);
+  registerGitHandlers(win);
+  registerExtensionHandlers(win);
 
   // Window controls IPC
   ipcMain.on("window:minimize", () => win.minimize());

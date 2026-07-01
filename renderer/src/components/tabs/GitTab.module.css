@@ -1,0 +1,453 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary, #ffffff);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbarGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn {
+  padding: 5px 10px;
+  border: 1px solid var(--border-color, #d4d4d4);
+  border-radius: 4px;
+  background: var(--bg-secondary, #f5f5f5);
+  color: var(--text-primary, #333);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.btn:hover {
+  background: var(--bg-hover, #e8e8e8);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btnPrimary {
+  composes: btn;
+  background: var(--accent-color, #007acc);
+  color: #fff;
+  border-color: var(--accent-color, #007acc);
+}
+.btnPrimary:hover {
+  background: var(--accent-hover, #005a9e);
+}
+
+.btnDanger {
+  composes: btn;
+  color: var(--danger-color, #d32f2f);
+  border-color: var(--danger-color, #d32f2f);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle input {
+  cursor: pointer;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ── Branches ────────────────────────────────────────────────── */
+
+.branches {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  font-size: 12px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.branchLabel {
+  color: var(--text-secondary, #888);
+  flex-shrink: 0;
+}
+
+.branchChip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color, #d4d4d4);
+  background: var(--bg-secondary, #f5f5f5);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 11px;
+  transition: background 0.15s;
+}
+.branchChip:hover {
+  background: var(--bg-hover, #e0e0e0);
+}
+.branchChipActive {
+  composes: branchChip;
+  background: var(--accent-color, #007acc);
+  color: #fff;
+  border-color: var(--accent-color, #007acc);
+}
+
+.branchChipRelated {
+  composes: branchChip;
+  border-color: var(--accent-color, #007acc);
+  color: var(--accent-color, #007acc);
+  background: var(--accent-light, #e8f4fd);
+}
+
+.newBranchInput {
+  width: 100px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color, #d4d4d4);
+  border-radius: 10px;
+  font-size: 11px;
+  outline: none;
+}
+.newBranchInput:focus {
+  border-color: var(--accent-color, #007acc);
+}
+
+/* ── Commit input ─────────────────────────────────────────────── */
+
+.commitBar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  flex-shrink: 0;
+}
+
+.commitInput {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color, #d4d4d4);
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+.commitInput:focus {
+  border-color: var(--accent-color, #007acc);
+}
+
+/* ── Status ──────────────────────────────────────────────────── */
+
+.statusBar {
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  flex-shrink: 0;
+}
+
+.statusFile {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.statusTag {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.tagAdded { background: #d4edda; color: #155724; }
+.tagModified { background: #fff3cd; color: #856404; }
+.tagDeleted { background: #f8d7da; color: #721c24; }
+.tagUntracked { background: #e2e3e5; color: #383d41; }
+
+/* ── Tree container ───────────────────────────────────────────── */
+
+.treeContainer {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.treeScroll {
+  position: relative;
+  min-height: 100%;
+}
+
+.graphSvg {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  float: left;
+}
+
+/* ── Tree row ─────────────────────────────────────────────────── */
+
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 4px;
+  border-bottom: 1px solid var(--border-color, #f0f0f0);
+  cursor: pointer;
+  transition: background 0.1s;
+  box-sizing: border-box;
+}
+.treeRow:hover {
+  background: var(--bg-hover, #f9f9f9);
+}
+
+.treeRowSelected {
+  composes: treeRow;
+  background: var(--accent-light, #e8f4fd);
+}
+
+.treeRowHead {
+  composes: treeRow;
+  background: var(--accent-light, #f0f6ff);
+  border-left: 3px solid var(--accent-color, #007acc);
+}
+
+.treeInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.treeMessage {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #333);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+}
+
+/* ── Tooltip (CSS-only, via data-tooltip) ────────────────────── */
+.treeMessage[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  max-width: 380px;
+  padding: 6px 10px;
+  background: #2a2a2e;
+  color: #f0f0f0;
+  font-size: 11px;
+  font-weight: 400;
+  font-family: "SF Mono", "Consolas", monospace;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.headBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent-color, #007acc);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: "SF Mono", "Consolas", monospace;
+  vertical-align: middle;
+}
+
+.treeMeta {
+  display: flex;
+  gap: 8px;
+  color: var(--text-secondary, #999);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.treeHash {
+  font-family: "SF Mono", "Consolas", monospace;
+  color: var(--text-secondary, #aaa);
+}
+
+.treeActions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.treeRow:hover .treeActions,
+.treeRowSelected .treeActions {
+  opacity: 1;
+}
+
+.iconBtn {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 3px;
+}
+.iconBtn:hover {
+  background: var(--bg-hover, #e0e0e0);
+  color: var(--text-primary, #333);
+}
+
+/* ── Diff panel ───────────────────────────────────────────────── */
+
+.diffPanel {
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  max-height: 200px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.diffHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  font-size: 11px;
+  color: var(--text-secondary, #666);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  position: sticky;
+  top: 0;
+}
+
+.diffFile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 11px;
+  font-family: "SF Mono", "Consolas", monospace;
+  border-bottom: 1px solid var(--border-color, #f5f5f5);
+}
+
+/* ── Error ────────────────────────────────────────────────────── */
+
+.error {
+  padding: 8px 12px;
+  color: var(--danger-color, #d32f2f);
+  font-size: 11px;
+  background: #fdecea;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  flex-shrink: 0;
+}
+
+/* ── Empty state ──────────────────────────────────────────────── */
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-secondary, #aaa);
+  font-size: 13px;
+}
+
+.emptyIcon {
+  font-size: 36px;
+  opacity: 0.4;
+}
+
+/* ── Checkpoint tasks sidebar ─────────────────────────────────── */
+
+.checkpointPanel {
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  max-height: 220px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.checkpointHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #666);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  position: sticky;
+  top: 0;
+}
+
+.taskItem {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-color, #f0f0f0);
+  font-size: 11px;
+  cursor: pointer;
+}
+.taskItem:hover {
+  background: var(--bg-hover, #f9f9f9);
+}
+
+.taskTitle {
+  font-weight: 500;
+  color: var(--text-primary, #333);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.taskStatus {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.statusRunning { background: #ffa726; }
+.statusCompleted { background: #66bb6a; }
+.statusError { background: #ef5350; }
+
+.taskMeta {
+  color: var(--text-secondary, #aaa);
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.checkpointItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 2px 24px;
+  font-size: 10px;
+  color: var(--text-secondary, #888);
+}
+.checkpointItem:hover {
+  background: var(--bg-hover, #f5f5f5);
+}

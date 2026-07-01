@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AgentSession, AgentMessage, AgentMessagePart, AgentProvider, AgentEvent, AgentConfigData, AgentCatalogProvider, FileAttachment } from "../types/ipc";
 import { usePackageStore } from "./packageStore";
+import { useGitStore } from "./gitStore";
 import { t } from "../i18n";
 
 // ── Question tool types ──────────────────────────────────────────
@@ -24,7 +25,8 @@ export type PendingQuestion = {
 /** A single renderable unit within an assistant message. */
 export type ContentPart =
   | { kind: "text"; text: string }
-  | { kind: "tool"; callID: string; toolName: string; args: Record<string, unknown>; result?: string; status: "pending" | "running" | "completed" | "error" };
+  | { kind: "tool"; callID: string; toolName: string; args: Record<string, unknown>; result?: string; status: "pending" | "running" | "completed" | "error" }
+  | { kind: "file"; files: FileAttachment[] };
 
 export type DisplayMessage = {
   id: string;
@@ -55,6 +57,20 @@ function partsToDisplay(msg: AgentMessage, isStreaming = false): DisplayMessage 
         result: part.result,
         status: part.status,
       });
+    } else if (part.type === "file") {
+      // Build FileAttachment from server-stored file part
+      const attachment: FileAttachment = {
+        name: part.filename ?? part.url.split("/").pop() ?? "file",
+        mime: part.mimeType,
+        url: part.url,
+      };
+      // Merge with existing file part in the same message if any
+      const lastFile = contentParts.filter((p) => p.kind === "file").pop() as { kind: "file"; files: FileAttachment[] } | undefined;
+      if (lastFile) {
+        lastFile.files.push(attachment);
+      } else {
+        contentParts.push({ kind: "file", files: [attachment] });
+      }
     }
   }
   return { id: msg.id, role: msg.role, contentParts, isStreaming, createdAt: msg.createdAt };
@@ -63,6 +79,59 @@ function partsToDisplay(msg: AgentMessage, isStreaming = false): DisplayMessage 
 // Module-level map: tracks the real server-assigned user message ID per session.
 // Used to filter out user-message echoes from message.part.updated SSE events.
 const _knownUserMsgIds: Record<string, string> = {};
+
+// Module-level title cache: persists locally-generated or server-updated titles
+// across session reloads and app restarts via localStorage.
+// When the server returns the default "New Session" title, we fall back to any
+// cached title for that session.
+const TITLE_CACHE_KEY = "shapp_devtool_agent_titles";
+const RECENT_MODELS_KEY = "shapp_devtool_recent_models";
+const MAX_RECENT_MODELS = 10;
+
+function loadRecentModels(): { providerId: string; modelId: string }[] {
+  try {
+    const raw = localStorage.getItem(RECENT_MODELS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentModels(models: { providerId: string; modelId: string }[]): void {
+  try {
+    localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(models.slice(0, MAX_RECENT_MODELS)));
+  } catch { /* ignore */ }
+}
+
+function loadTitleCache(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TITLE_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTitleCache(cache: Record<string, string>): void {
+  try {
+    localStorage.setItem(TITLE_CACHE_KEY, JSON.stringify(cache));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+const _titleCache: Record<string, string> = loadTitleCache();
+
+function resolveTitle(sessionId: string, serverTitle: string): string {
+  // A real title: non-empty and not the default timestamp format
+  const isDefault = !serverTitle
+    || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(serverTitle);
+  if (!isDefault) {
+    _titleCache[sessionId] = serverTitle;
+    saveTitleCache(_titleCache);
+    return serverTitle;
+  }
+  // Fall back to the content-based auto-title cached from the first user message
+  return _titleCache[sessionId] || "";
+}
 
 // ── Store ─────────────────────────────────────────────────────────
 
@@ -89,6 +158,7 @@ type AgentState = {
   configData: AgentConfigData | null;
   catalogProviders: AgentCatalogProvider[];
   catalogLoading: boolean;
+  recentModels: { providerId: string; modelId: string }[];
   mode: "build" | "plan";
 
   // Initialisation
@@ -99,6 +169,9 @@ type AgentState = {
   // Question tool interactive state
   pendingQuestion: PendingQuestion | null;
 
+  // Failed query retry state
+  lastFailedQuery: { text: string; files?: FileAttachment[] } | null;
+
   // Actions
   init: () => Promise<void>;
   retryConnection: () => Promise<void>;
@@ -108,6 +181,7 @@ type AgentState = {
   setActiveSession: (id: string) => Promise<void>;
   newSession: () => void;
   sendMessage: (text: string, files?: FileAttachment[]) => Promise<void>;
+  retryLastMessage: () => Promise<void>;
   abortStreaming: () => Promise<void>;
   togglePanel: () => void;
   setPanelWidth: (w: number) => void;
@@ -115,6 +189,7 @@ type AgentState = {
   setMode: (mode: "build" | "plan") => void;
   loadCatalog: () => Promise<void>;
   addProviderKey: (providerId: string, key: string) => Promise<void>;
+  setProviderConfig: (providerId: string, config: { type: "api" | "oauth"; key?: string; options?: Record<string, string> }) => Promise<void>;
   handleProjectChange: (dir: string) => Promise<void>;
   answerQuestion: (answers: string[][]) => Promise<void>;
   _handleEvent: (event: AgentEvent) => void;
@@ -128,17 +203,19 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   streamingSessionId: null,
   panelVisible: true,
   panelWidth: 360,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   providers: [],
   configData: null,
   catalogProviders: [],
   catalogLoading: false,
+  recentModels: loadRecentModels(),
   mode: "build",
   initialized: false,
   serverStatus: "unknown",
   serverError: null,
   pendingQuestion: null,
+  lastFailedQuery: null,
 
   // ── init ──────────────────────────────────────────────────────────
   init: async () => {
@@ -182,57 +259,65 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
     set({ serverStatus: "ready", serverError: null });
 
-    // Load sessions
+    // ── Subscribe to SSE events FIRST (before loading data) ────────
+    // The SSE stream must be connected before the user sends any message,
+    // otherwise server response events are lost.  onEvent / onQuestion
+    // are IPC listeners that stick around regardless of subscribe() timing.
+    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
+    window.devtool.agent.subscribe().catch(() => {});
+    window.devtool.agent.onQuestion((questionData) => {
+      set({ pendingQuestion: questionData });
+    });
+
+    // ── Load sessions / providers / config in parallel ───────────
+    // None of these block message sending; the SSE stream is already open.
     try {
-      const sessions = await window.devtool.agent.listSessions();
+      const sessions = (await window.devtool.agent.listSessions()).map((s) => ({
+        ...s,
+        title: resolveTitle(s.id, s.title),
+      }));
       set({ sessions });
     } catch { /* ignore */ }
 
-    // Load providers
     try {
       const providers = await window.devtool.agent.listProviders();
       if (providers.length > 0) set({ providers });
     } catch { /* ignore */ }
 
-    // Load config (free models + provider groups)
     try {
       const configData = await window.devtool.agent.getConfig();
       set({ configData });
-      // Update selected model from defaults if not yet set
-      const s = get();
-      if (s.selectedProvider === "anthropic" && configData.defaultProviderId) {
+      // Always use the server's default model, overriding the hardcoded fallback
+      if (configData.defaultProviderId && configData.defaultModelId) {
         set({
           selectedProvider: configData.defaultProviderId,
           selectedModel: configData.defaultModelId,
         });
+        // Persist to Electron store so agent:sendPrompt reads the correct model
+        window.devtool.agent.setPrefs({
+          selectedProvider: configData.defaultProviderId,
+          selectedModel: configData.defaultModelId,
+        }).catch(() => {});
       }
     } catch { /* ignore */ }
-
-    // Subscribe to SSE events
-    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
-    window.devtool.agent.subscribe().catch(() => {});
-
-    // Subscribe to question tool interactive requests
-    window.devtool.agent.onQuestion((questionData) => {
-      set({ pendingQuestion: questionData });
-    });
   },
 
   // ── createSession ─────────────────────────────────────────────────
   // ── newSession (lazy — no IPC until first message) ───────────────────
   newSession: () => {
-    set({ activeSessionId: null });
+    set({ activeSessionId: null, lastFailedQuery: null });
   },
 
   // ── createSession ────────────────────────────────────────
   createSession: async (directory?: string) => {
     const session = await window.devtool.agent.createSession(directory);
+    const resolved = { ...session, title: resolveTitle(session.id, session.title) };
     set((s) => ({
-      sessions: [session, ...s.sessions],
-      activeSessionId: session.id,
-      messages: { ...s.messages, [session.id]: [] },
+      sessions: [resolved, ...s.sessions],
+      activeSessionId: resolved.id,
+      messages: { ...s.messages, [resolved.id]: [] },
     }));
-    return session.id;
+    return resolved.id;
   },
 
   // ── deleteSession ─────────────────────────────────────────────────
@@ -276,11 +361,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       sessionId = await get().createSession(projectDir);
     }
 
+    // Save query for potential retry (cleared on success in session.idle handler)
+    set({ lastFailedQuery: { text, files: files?.length ? files : undefined } });
+
     // Optimistically add user message
     const userMsg: DisplayMessage = {
       id: `local-${Date.now()}`,
       role: "user",
-      contentParts: [{ kind: "text", text }],
+      contentParts: [
+        { kind: "text", text },
+        ...(files && files.length > 0 ? [{ kind: "file" as const, files }] : []),
+      ],
       isStreaming: false,
       createdAt: Date.now(),
     };
@@ -306,8 +397,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     // Auto-generate title from the first user message if the session still has the default title
     set((s) => {
       const session = s.sessions.find((sess) => sess.id === sessionId);
-      if (!session || session.title !== "New Session") return {};
+      if (!session) return {};
+      const isDefault = !session.title
+        || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(session.title);
+      if (!isDefault) return {};
       const autoTitle = text.slice(0, 35).trim() + (text.length > 35 ? "\u2026" : "");
+      _titleCache[sessionId!] = autoTitle;
+      saveTitleCache(_titleCache);
       return {
         sessions: s.sessions.map((sess) =>
           sess.id === sessionId ? { ...sess, title: autoTitle } : sess
@@ -318,13 +414,22 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     try {
       await window.devtool.agent.sendPrompt(sessionId, text, projectDir, get().mode, files);
     } catch (err) {
-      // Remove placeholder on error
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Replace placeholder with error message
       set((s) => ({
         isStreaming: false,
         streamingSessionId: null,
         messages: {
           ...s.messages,
-          [sessionId!]: (s.messages[sessionId!] ?? []).filter((m) => m.id !== placeholderId),
+          [sessionId!]: (s.messages[sessionId!] ?? [])
+            .filter((m) => m.id !== placeholderId)
+            .concat({
+              id: `error-${Date.now()}`,
+              role: "system",
+              contentParts: [{ kind: "text", text: `❌ ${errMsg}` }],
+              isStreaming: false,
+              createdAt: Date.now(),
+            }),
         },
       }));
     }
@@ -336,7 +441,80 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     if (streamingSessionId) {
       await window.devtool.agent.abortSession(streamingSessionId).catch(() => {});
     }
-    set({ isStreaming: false, streamingSessionId: null });
+    set({ isStreaming: false, streamingSessionId: null, lastFailedQuery: null });
+  },
+
+  // ── retryLastMessage ──────────────────────────────────────────────
+  retryLastMessage: async () => {
+    const { lastFailedQuery, isStreaming, activeSessionId, messages } = get();
+    if (!lastFailedQuery || isStreaming) return;
+
+    const sessionId = activeSessionId;
+    if (!sessionId) return;
+
+    const { text, files } = lastFailedQuery;
+    // Keep lastFailedQuery set so the user can retry again if it fails again;
+    // it will be cleared by session.idle on success.
+    set({ lastFailedQuery: null });
+
+    // ── Reuse the existing user bubble ──────────────────────────
+    // Remove all messages that came after the last user message
+    // (the failed assistant response, any error system messages, etc.),
+    // then append a fresh streaming placeholder for the retry.
+    const currentMsgs = messages[sessionId] ?? [];
+    let lastUserIdx = -1;
+    for (let i = currentMsgs.length - 1; i >= 0; i--) {
+      if (currentMsgs[i].role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    const filtered =
+      lastUserIdx >= 0 ? currentMsgs.slice(0, lastUserIdx + 1) : currentMsgs;
+
+    const placeholderId = `streaming-${Date.now()}`;
+    const placeholder: DisplayMessage = {
+      id: placeholderId,
+      role: "assistant",
+      contentParts: [],
+      isStreaming: true,
+      createdAt: Date.now(),
+    };
+
+    set((s) => ({
+      isStreaming: true,
+      streamingSessionId: sessionId,
+      lastFailedQuery: { text, files },
+      messages: {
+        ...s.messages,
+        [sessionId!]: [...filtered, placeholder],
+      },
+    }));
+
+    // ── Re-send the prompt ──────────────────────────────────────
+    try {
+      const pkg = usePackageStore.getState().current;
+      const projectDir = pkg?.dir;
+      await window.devtool.agent.sendPrompt(sessionId, text, projectDir, get().mode, files);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      set((s) => ({
+        isStreaming: false,
+        streamingSessionId: null,
+        messages: {
+          ...s.messages,
+          [sessionId!]: (s.messages[sessionId!] ?? [])
+            .filter((m) => m.id !== placeholderId)
+            .concat({
+              id: `error-${Date.now()}`,
+              role: "system",
+              contentParts: [{ kind: "text", text: `❌ ${errMsg}` }],
+              isStreaming: false,
+              createdAt: Date.now(),
+            }),
+        },
+      }));
+    }
   },
 
   // ── togglePanel ───────────────────────────────────────────────────
@@ -359,6 +537,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   setModel: (provider: string, model: string) => {
     set({ selectedProvider: provider, selectedModel: model });
     window.devtool.agent.setPrefs({ selectedProvider: provider, selectedModel: model }).catch(() => {});
+
+    // Track recent model usage
+    const recent = get().recentModels.filter(
+      (r) => !(r.providerId === provider && r.modelId === model)
+    );
+    const updated = [{ providerId: provider, modelId: model }, ...recent].slice(0, MAX_RECENT_MODELS);
+    set({ recentModels: updated });
+    saveRecentModels(updated);
   },
 
   // ── setMode ───────────────────────────────────────────────────────
@@ -392,6 +578,20 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
+  setProviderConfig: async (providerId: string, config: { type: "api" | "oauth"; key?: string; options?: Record<string, string> }) => {
+    await window.devtool.agent.setProviderConfig(providerId, config);
+    // Reload config and catalog
+    try {
+      const [configData, catalog] = await Promise.all([
+        window.devtool.agent.getConfig(),
+        window.devtool.agent.listCatalogProviders(),
+      ]);
+      set({ configData, catalogProviders: catalog });
+    } catch {
+      /* ignore */
+    }
+  },
+
   // ── handleProjectChange ───────────────────────────────────────────
   // Called whenever the user opens a different project folder.
   // Restarts the OpenCode server with the new cwd, then reloads the
@@ -403,12 +603,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     await window.devtool.agent.setProject(dir).catch(() => {});
 
     // Reset session state — old sessions belong to the previous project.
-    set({ sessions: [], activeSessionId: null, messages: {}, isStreaming: false, streamingSessionId: null, pendingQuestion: null });
+    set({ sessions: [], activeSessionId: null, messages: {}, isStreaming: false, streamingSessionId: null, pendingQuestion: null, lastFailedQuery: null });
 
     // Wait briefly for the server to stabilise then reload sessions.
     await new Promise((r) => setTimeout(r, 800));
     try {
-      const sessions = await window.devtool.agent.listSessions();
+      const sessions = (await window.devtool.agent.listSessions()).map((s) => ({
+        ...s,
+        title: resolveTitle(s.id, s.title),
+      }));
       // Restore the most recent session so the conversation continues.
       const lastSessionId = sessions[0]?.id ?? null;
       set({ sessions, activeSessionId: lastSessionId });
@@ -557,18 +760,24 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     } else if (type === "session.updated") {
       const info = props.info as any;
-      // Skip missing, empty, or OpenCode's default timestamp title format
-      if (!info?.id || typeof info.title !== "string" || !info.title.trim()) return;
-      if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(info.title)) return;
+      if (!info?.id) return;
+      const rawTitle: string = typeof info.title === "string" ? info.title : "";
+      // Only apply if opencode generated a real (non-default) title
+      if (!rawTitle || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(rawTitle)) return;
+      const title = resolveTitle(info.id, rawTitle);
       set((s) => ({
         sessions: s.sessions.map((sess) =>
-          sess.id === info.id ? { ...sess, title: info.title } : sess
+          sess.id === info.id ? { ...sess, title } : sess
         ),
       }));
 
     } else if (type === "session.idle") {
       const sessionId: string = props.sessionID ?? "";
       if (!sessionId) return;
+
+      // Capture whether this session was streaming BEFORE updating state
+      const wasStreaming = get().streamingSessionId === sessionId;
+
       set((s) => {
         const msgs = s.messages[sessionId] ?? [];
         const updated = msgs.map((m) =>
@@ -577,9 +786,51 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         return {
           isStreaming: s.streamingSessionId === sessionId ? false : s.isStreaming,
           streamingSessionId: s.streamingSessionId === sessionId ? null : s.streamingSessionId,
+          lastFailedQuery: s.streamingSessionId === sessionId ? null : s.lastFailedQuery,
           messages: { ...s.messages, [sessionId]: updated },
         };
       });
+
+      // ── Auto-commit: snapshot code changes after agent finishes ──
+      if (!wasStreaming) {
+        console.log("[AgentStore] auto-commit skipped: session was not streaming, session:", sessionId);
+        return;
+      }
+      const pkg = usePackageStore.getState().current;
+      if (!pkg?.dir) {
+        console.log("[AgentStore] auto-commit skipped: no project dir, session:", sessionId);
+        return;
+      }
+      const msgs = get().messages[sessionId] ?? [];
+      // Use the last user query as commit message
+      const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+      let summary = "AI generated code";
+      if (lastUser) {
+        const queryText = lastUser.contentParts
+          .filter((p) => p.kind === "text")
+          .map((p) => (p as ContentPart & { kind: "text" }).text)
+          .join("")
+          .trim();
+        if (queryText.length > 3) {
+          summary = queryText.length > 80 ? queryText.slice(0, 77) + "…" : queryText;
+        }
+      }
+      console.log("[AgentStore] triggering auto-commit for session:", sessionId, "summary:", summary.slice(0, 40));
+      // Use sessionId as taskId (each idle round maps to one checkpoint)
+      window.devtool.git.autoCommit(pkg.dir, sessionId, summary)
+        .then((result) => {
+          if (result) {
+            console.log("[AgentStore] auto-commit created:", result.shortOid, result.fileCount, "files");
+            // fullRefresh atomically reloads git data + checkpoint tasks in one set() call,
+            // avoiding the stale-data race where intermediate state wins the render.
+            useGitStore.getState().fullRefresh(pkg.dir).catch(
+              (err) => console.warn("[AgentStore] git fullRefresh failed:", err)
+            );
+          } else {
+            console.log("[AgentStore] auto-commit: no file changes");
+          }
+        })
+        .catch((err) => console.warn("[AgentStore] auto-commit failed:", err));
 
     } else if (type === "session.error") {
       const sessionId: string | undefined = props.sessionID;
@@ -589,7 +840,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         const msgs = s.messages[sessionId] ?? [];
         const updated = msgs.map((m) =>
           m.isStreaming
-            ? { ...m, isStreaming: false, textContent: m.textContent || t("tool.errorMessage", { msg: errMsg }) }
+            ? { ...m, isStreaming: false, contentParts: [...m.contentParts, { kind: "text" as const, text: `❌ ${t("tool.errorMessage", { msg: errMsg })}` }] }
             : m
         );
         return {

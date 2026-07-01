@@ -54,7 +54,7 @@ export type CaptureParams = {
   data: string; // base64 (screenshot) or blob URL (video)
   mimeType: "image/png" | "video/webm";
   filename: string;
-  role: "cover" | "carousel" | "none";
+  role: "cover" | "carousel" | "logo" | "none";
   appDir: string;
 };
 
@@ -130,6 +130,11 @@ contextBridge.exposeInMainWorld("devtool", {
       ipcRenderer.on("package:manifestReload", handler);
       return () => ipcRenderer.removeListener("package:manifestReload", handler);
     },
+    onWarningsChanged: (cb: (warnings: string[]) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, warnings: string[]) => cb(warnings);
+      ipcRenderer.on("package:warningsChanged", handler);
+      return () => ipcRenderer.removeListener("package:warningsChanged", handler);
+    },
     readImage: (appDir: string, relPath: string): Promise<string | null> =>
       ipcRenderer.invoke("package:readImage", appDir, relPath),
     saveImageFile: (appDir: string, relPath: string, dataUrl: string): Promise<void> =>
@@ -140,8 +145,8 @@ contextBridge.exposeInMainWorld("devtool", {
       ipcRenderer.invoke("package:deleteImageFile", appDir, relPath),
     pickImageFiles: (appDir: string, multi: boolean): Promise<{ dataUrl: string; filename: string }[]> =>
       ipcRenderer.invoke("package:pickImageFiles", appDir, multi),
-    onAssetsChanged: (cb: (info: { role: "cover" | "carousel"; appDir: string; filename: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, info: { role: "cover" | "carousel"; appDir: string; filename: string }) => cb(info);
+    onAssetsChanged: (cb: (info: { role: "cover" | "carousel" | "logo"; appDir: string; filename: string; relPath: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { role: "cover" | "carousel" | "logo"; appDir: string; filename: string; relPath: string }) => cb(info);
       ipcRenderer.on("package:assetsChanged", handler);
       return () => ipcRenderer.removeListener("package:assetsChanged", handler);
     },
@@ -208,6 +213,72 @@ contextBridge.exposeInMainWorld("devtool", {
       ipcRenderer.invoke("kv:importEntries", dbPath, entries),
   },
 
+  // Git version management (isomorphic-git)
+  git: {
+    init: (projectDir: string): Promise<string> =>
+      ipcRenderer.invoke("git:init", projectDir),
+    commit: (projectDir: string, message: string): Promise<string> =>
+      ipcRenderer.invoke("git:commit", projectDir, message),
+    log: (projectDir: string, depth?: number, branch?: string): Promise<import("./ipc/gitService").GitCommitInfo[]> =>
+      ipcRenderer.invoke("git:log", projectDir, depth, branch),
+    graph: (projectDir: string): Promise<import("./ipc/gitService").GitGraphData> =>
+      ipcRenderer.invoke("git:graph", projectDir),
+    status: (projectDir: string): Promise<import("./ipc/gitService").GitStatusEntry[]> =>
+      ipcRenderer.invoke("git:status", projectDir),
+    listBranches: (projectDir: string): Promise<import("./ipc/gitService").GitBranchInfo[]> =>
+      ipcRenderer.invoke("git:listBranches", projectDir),
+    createBranch: (projectDir: string, branchName: string): Promise<void> =>
+      ipcRenderer.invoke("git:createBranch", projectDir, branchName),
+    switchBranch: (projectDir: string, branchName: string): Promise<void> =>
+      ipcRenderer.invoke("git:switchBranch", projectDir, branchName),
+    currentBranch: (projectDir: string): Promise<string> =>
+      ipcRenderer.invoke("git:currentBranch", projectDir),
+    diff: (projectDir: string, oid1?: string, oid2?: string): Promise<import("./ipc/gitService").GitDiffEntry[]> =>
+      ipcRenderer.invoke("git:diff", projectDir, oid1, oid2),
+    revertFile: (projectDir: string, filepath: string): Promise<void> =>
+      ipcRenderer.invoke("git:revertFile", projectDir, filepath),
+    resetToCommit: (projectDir: string, oid: string): Promise<void> =>
+      ipcRenderer.invoke("git:resetToCommit", projectDir, oid),
+    autoCommit: (projectDir: string, taskId: string, summary: string): Promise<import("./ipc/gitService").AutoCommitResult | null> =>
+      ipcRenderer.invoke("git:autoCommit", projectDir, taskId, summary),
+  },
+
+  // Checkpoint storage (SQLite)
+  checkpoint: {
+    createTask: (sessionId: string, projectDir: string, title?: string): Promise<import("./ipc/checkpoint").TaskRow> =>
+      ipcRenderer.invoke("checkpoint:createTask", sessionId, projectDir, title),
+    updateTaskStatus: (id: string, status: "running" | "completed" | "error"): Promise<void> =>
+      ipcRenderer.invoke("checkpoint:updateTaskStatus", id, status),
+    getTask: (id: string): Promise<import("./ipc/checkpoint").TaskRow | undefined> =>
+      ipcRenderer.invoke("checkpoint:getTask", id),
+    listTasks: (projectDir: string): Promise<import("./ipc/checkpoint").TaskRow[]> =>
+      ipcRenderer.invoke("checkpoint:listTasks", projectDir),
+    deleteTask: (id: string): Promise<void> =>
+      ipcRenderer.invoke("checkpoint:deleteTask", id),
+    listCheckpoints: (taskId: string): Promise<import("./ipc/checkpoint").CheckpointRow[]> =>
+      ipcRenderer.invoke("checkpoint:listCheckpoints", taskId),
+    getTaskWithCheckpoints: (taskId: string): Promise<import("./ipc/checkpoint").TaskWithCheckpoints | undefined> =>
+      ipcRenderer.invoke("checkpoint:getTaskWithCheckpoints", taskId),
+    listTasksWithCheckpoints: (projectDir: string): Promise<import("./ipc/checkpoint").TaskWithCheckpoints[]> =>
+      ipcRenderer.invoke("checkpoint:listTasksWithCheckpoints", projectDir),
+  },
+
+  // Extensions (VS Code-compatible)
+  extensions: {
+    list: (): Promise<import("./ipc/extensions").VSCodeExtension[]> =>
+      ipcRenderer.invoke("extensions:list"),
+    installFromDialog: (): Promise<import("./ipc/extensions").VSCodeExtension | null> =>
+      ipcRenderer.invoke("extensions:installFromDialog"),
+    install: (vsixPath: string): Promise<import("./ipc/extensions").VSCodeExtension> =>
+      ipcRenderer.invoke("extensions:install", vsixPath),
+    uninstall: (extensionId: string): Promise<void> =>
+      ipcRenderer.invoke("extensions:uninstall", extensionId),
+    setEnabled: (extensionId: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke("extensions:setEnabled", extensionId, enabled),
+    getIcon: (extensionId: string): Promise<string | null> =>
+      ipcRenderer.invoke("extensions:getIcon", extensionId),
+  },
+
   // Static server for preview
   server: {
     start: (appDir: string, frontendDir?: string): Promise<{ url: string; port: number }> =>
@@ -215,6 +286,8 @@ contextBridge.exposeInMainWorld("devtool", {
     stop: (): Promise<void> => ipcRenderer.invoke("server:stop"),
     getUrl: (): Promise<string | null> =>
       ipcRenderer.invoke("server:getUrl"),
+    getLanUrl: (): Promise<string | null> =>
+      ipcRenderer.invoke("server:getLanUrl"),
   },
 
   // Capture
@@ -274,6 +347,8 @@ contextBridge.exposeInMainWorld("devtool", {
     }> => ipcRenderer.invoke("agent:getConfig"),
     setApiKey: (providerId: string, key: string): Promise<void> =>
       ipcRenderer.invoke("agent:setApiKey", providerId, key),
+    setProviderConfig: (providerId: string, config: { type: "api" | "oauth"; key?: string; options?: Record<string, string> }): Promise<void> =>
+      ipcRenderer.invoke("agent:setProviderConfig", providerId, config),
     listCatalogProviders: (): Promise<import("./ipc/agent").AgentCatalogProvider[]> =>
       ipcRenderer.invoke("agent:listCatalogProviders"),
     getPrefs: (): Promise<{ width: number; visible: boolean; selectedProvider: string; selectedModel: string; mode: "build" | "plan" }> =>

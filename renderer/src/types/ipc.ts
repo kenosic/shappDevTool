@@ -97,7 +97,7 @@ export type AgentSession = {
 export type AgentMessagePart =
   | { type: "text"; text: string }
   | { type: "tool"; callID: string; toolName: string; args: Record<string, unknown>; result?: string; status: "pending" | "running" | "completed" | "error" }
-  | { type: "file"; mimeType: string; url: string };
+  | { type: "file"; mimeType: string; url: string; filename?: string };
 
 export type AgentMessage = {
   id: string;
@@ -144,6 +144,61 @@ export type AgentProviderGroup = {
   models: { id: string; name: string }[];
 };
 
+export type ModelCapabilities = {
+  temperature: boolean;
+  reasoning: boolean;
+  attachment: boolean;
+  toolcall: boolean;
+  input: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
+  output: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
+};
+
+export type ModelCost = {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+};
+
+export type ModelLimit = {
+  context: number;
+  input?: number;
+  output: number;
+};
+
+export type ModelVariant = {
+  id: string;
+  name: string;
+  disabled?: boolean;
+};
+
+export type CatalogModel = {
+  id: string;
+  name: string;
+  family?: string;
+  status?: "alpha" | "beta" | "deprecated" | "active";
+  capabilities?: ModelCapabilities;
+  cost?: ModelCost;
+  limit?: ModelLimit;
+  releaseDate?: string;
+  variants?: ModelVariant[];
+};
+
+export type AuthPrompt = {
+  type: "text" | "select";
+  key: string;
+  message: string;
+  placeholder?: string;
+  options?: { label: string; value: string; hint?: string }[];
+  when?: { key: string; op: string; value: string };
+};
+
+export type AuthMethod = {
+  type: "oauth" | "api";
+  label: string;
+  prompts?: AuthPrompt[];
+};
+
 export type AgentCatalogProvider = {
   id: string;
   name: string;
@@ -151,8 +206,8 @@ export type AgentCatalogProvider = {
   api?: string;
   npm?: string;
   connected: boolean;
-  authMethods: { type: "oauth" | "api"; label: string }[];
-  models: { id: string; name: string }[];
+  authMethods: AuthMethod[];
+  models: CatalogModel[];
 };
 
 export type AgentConfigData = {
@@ -211,12 +266,13 @@ export type DevtoolAPI = {
     ) => () => void;
     saveManifest: (dir: string, manifest: AppManifest) => Promise<void>;
     onManifestReload: (cb: (manifest: AppManifest) => void) => () => void;
+    onWarningsChanged: (cb: (warnings: string[]) => void) => () => void;
     readImage: (appDir: string, relPath: string) => Promise<string | null>;
     saveImageFile: (appDir: string, relPath: string, dataUrl: string) => Promise<void>;
     listImages: (appDir: string, subPath: string) => Promise<string[]>;
     deleteImageFile: (appDir: string, relPath: string) => Promise<void>;
     pickImageFiles: (appDir: string, multi: boolean) => Promise<{ dataUrl: string; filename: string }[]>;
-    onAssetsChanged: (cb: (info: { role: "cover" | "carousel"; appDir: string; filename: string }) => void) => () => void;
+    onAssetsChanged: (cb: (info: { role: "cover" | "carousel" | "logo"; appDir: string; filename: string; relPath: string }) => void) => () => void;
     build: (appDir: string) => Promise<{ outputPath: string } | null>;
   };
   execution: {
@@ -251,6 +307,7 @@ export type DevtoolAPI = {
     start: (appDir: string, frontendDir?: string) => Promise<{ url: string; port: number }>;
     stop: () => Promise<void>;
     getUrl: () => Promise<string | null>;
+    getLanUrl: () => Promise<string | null>;
   };
   capture: {
     screenshot: (rect?: { x: number; y: number; width: number; height: number }) => Promise<string>;
@@ -278,6 +335,7 @@ export type DevtoolAPI = {
     listProviders: () => Promise<AgentProvider[]>;
     getConfig: () => Promise<AgentConfigData>;
     setApiKey: (providerId: string, key: string) => Promise<void>;
+    setProviderConfig: (providerId: string, config: { type: "api" | "oauth"; key?: string; options?: Record<string, string> }) => Promise<void>;
     listCatalogProviders: () => Promise<AgentCatalogProvider[]>;
     getPrefs: () => Promise<AgentPrefs>;
     setPrefs: (prefs: Partial<AgentPrefs>) => Promise<void>;
@@ -297,6 +355,125 @@ export type DevtoolAPI = {
       }>;
     }) => void) => () => void;
   };
+  git: {
+    init: (projectDir: string) => Promise<string>;
+    commit: (projectDir: string, message: string) => Promise<string>;
+    log: (projectDir: string, depth?: number, branch?: string) => Promise<GitCommitInfo[]>;
+    graph: (projectDir: string) => Promise<GitGraphData>;
+    status: (projectDir: string) => Promise<GitStatusEntry[]>;
+    listBranches: (projectDir: string) => Promise<GitBranchInfo[]>;
+    createBranch: (projectDir: string, branchName: string) => Promise<void>;
+    switchBranch: (projectDir: string, branchName: string) => Promise<void>;
+    currentBranch: (projectDir: string) => Promise<string>;
+    diff: (projectDir: string, oid1?: string, oid2?: string) => Promise<GitDiffEntry[]>;
+    revertFile: (projectDir: string, filepath: string) => Promise<void>;
+    resetToCommit: (projectDir: string, oid: string) => Promise<void>;
+    autoCommit: (projectDir: string, taskId: string, summary: string) => Promise<AutoCommitResult | null>;
+  };
+  checkpoint: {
+    createTask: (sessionId: string, projectDir: string, title?: string) => Promise<TaskRow>;
+    updateTaskStatus: (id: string, status: "running" | "completed" | "error") => Promise<void>;
+    getTask: (id: string) => Promise<TaskRow | undefined>;
+    listTasks: (projectDir: string) => Promise<TaskRow[]>;
+    deleteTask: (id: string) => Promise<void>;
+    listCheckpoints: (taskId: string) => Promise<CheckpointRow[]>;
+    getTaskWithCheckpoints: (taskId: string) => Promise<TaskWithCheckpoints | undefined>;
+    listTasksWithCheckpoints: (projectDir: string) => Promise<TaskWithCheckpoints[]>;
+  };
+  extensions: {
+    list: () => Promise<VSCodeExtension[]>;
+    installFromDialog: () => Promise<VSCodeExtension | null>;
+    install: (vsixPath: string) => Promise<VSCodeExtension>;
+    uninstall: (extensionId: string) => Promise<void>;
+    setEnabled: (extensionId: string, enabled: boolean) => Promise<void>;
+    getIcon: (extensionId: string) => Promise<string | null>;
+  };
+};
+
+// ── Git types ──────────────────────────────────────────────────────
+
+export type GitCommitInfo = {
+  oid: string;
+  shortOid: string;
+  message: string;
+  author: { name: string; email: string };
+  committedAt: number;
+  parentOids: string[];
+};
+
+export type GitBranchInfo = {
+  name: string;
+  isCurrent: boolean;
+  tipOid: string;
+};
+
+export type GitStatusEntry = {
+  path: string;
+  status: "added" | "modified" | "deleted" | "untracked";
+};
+
+export type GitDiffEntry = {
+  path: string;
+  oldOid?: string;
+  newOid?: string;
+  changeType: "added" | "modified" | "deleted";
+};
+
+export type AutoCommitResult = {
+  oid: string;
+  shortOid: string;
+  message: string;
+  fileCount: number;
+  files: string[];
+};
+
+// ── Checkpoint types ──────────────────────────────────────────────
+
+export type GitGraphData = {
+  commits: GitCommitInfo[];
+  branches: { name: string; tipOid: string; isCurrent: boolean }[];
+};
+
+export type TaskRow = {
+  id: string;
+  session_id: string;
+  project_dir: string;
+  title: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CheckpointRow = {
+  id: string;
+  task_id: string;
+  commit_oid: string;
+  branch: string;
+  summary: string;
+  file_count: number;
+  created_at: number;
+};
+
+export type TaskWithCheckpoints = TaskRow & { checkpoints: CheckpointRow[] };
+
+// ── Extension types ──────────────────────────────────────────────
+
+export type VSCodeExtension = {
+  id: string;
+  name: string;
+  displayName: string;
+  version: string;
+  publisher: string;
+  description: string;
+  icon?: string;
+  categories?: string[];
+  engines?: { vscode: string };
+  main?: string;
+  contributes?: Record<string, unknown>;
+  enabled: boolean;
+  installedPath: string;
+  extensionDir: string;
+  activationEvents?: string[];
 };
 
 declare global {

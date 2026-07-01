@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useAgentStore, type DisplayMessage, type ContentPart, type QuestionInfo } from "../../stores/agentStore";
+import type { FileAttachment } from "../../types/ipc";
 import { useT } from "../../i18n";
 import styles from "./MessageList.module.css";
 
@@ -18,6 +19,9 @@ export default function MessageList() {
     return id ? (s.messages[id] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES;
   });
   const initialized = useAgentStore((s) => s.initialized);
+  const lastFailedQuery = useAgentStore((s) => s.lastFailedQuery);
+  const retryLastMessage = useAgentStore((s) => s.retryLastMessage);
+  const isStreaming = useAgentStore((s) => s.isStreaming);
 
   const listRef = useRef<HTMLDivElement>(null);
   const userScrolled = useRef(false);
@@ -72,6 +76,14 @@ export default function MessageList() {
       {mergeAssistantMessages(messages).map((msg) => (
         <MessageItem key={msg.id} msg={msg} />
       ))}
+      {lastFailedQuery && !isStreaming && (
+        <div className={styles.retryBanner}>
+          <span className={styles.retryBannerText}>{t("agent.queryFailed")}</span>
+          <button className={styles.retryBannerBtn} onClick={retryLastMessage}>
+            {t("common.retry")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -143,6 +155,8 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
 };
 
 function MessageItem({ msg }: { msg: DisplayMessage }) {
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
   if (msg.role === "system") {
     const textPart = msg.contentParts.find((p) => p.kind === "text");
     return <div className={styles.systemMsg}>{(textPart as any)?.text ?? ""}</div>;
@@ -150,13 +164,41 @@ function MessageItem({ msg }: { msg: DisplayMessage }) {
 
   if (msg.role === "user") {
     const textPart = msg.contentParts.find((p) => p.kind === "text");
-    return <div className={styles.userBubble}>{(textPart as any)?.text ?? ""}</div>;
+    const filePart = msg.contentParts.find((p) => p.kind === "file") as { kind: "file"; files: FileAttachment[] } | undefined;
+    return (
+      <div className={styles.userMsgWrap}>
+        <div className={styles.userBubble}>{(textPart as any)?.text ?? ""}</div>
+        {filePart && filePart.files.length > 0 && (
+          <div className={styles.userFiles}>
+            {filePart.files.map((f, i) => {
+              const isImage = f.mime.startsWith("image/");
+              return (
+                <span
+                  key={i}
+                  className={`${styles.userFileChip} ${isImage ? styles.userFileChipImage : ""}`}
+                  {...(isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => { if (e.key === "Enter") setPreviewImage(f.url); } } : {})}
+                >
+                  {isImage && <img className={styles.userFileThumb} src={f.url} alt={f.name} />}
+                  <span className={styles.userFileName}>{f.name}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {previewImage && (
+          <div className={styles.imagePreview} onClick={() => setPreviewImage(null)}>
+            <button className={styles.imagePreviewClose} onClick={() => setPreviewImage(null)}>×</button>
+            <img className={styles.imagePreviewImg} src={previewImage} alt="preview" onClick={(e) => e.stopPropagation()} />
+          </div>
+        )}
+      </div>
+    );
   }
 
   // Assistant — render parts in the order they arrived from the SSE stream
   const hasText = msg.contentParts.some((p) => p.kind === "text" && (p as any).text?.trim());
   return (
-    <div className={styles.assistantBubble}>
+    <div className={styles.assistantMsg}>
       {msg.contentParts.map((part, i) => {
         if (part.kind === "tool") {
           return part.toolName === "question"

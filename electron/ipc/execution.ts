@@ -47,15 +47,20 @@ export function setServerUrlGetter(fn: () => string | null): void {
 function getDenoPath(): string {
   const platform = process.platform;
   const arch = process.arch;
+  const ext = platform === "win32" ? ".exe" : "";
+  const suffix = arch === "arm64" ? "arm64" : "x64";
 
   if (app.isPackaged) {
     const resourcesDir = process.resourcesPath;
-    const ext = platform === "win32" ? ".exe" : "";
-    const suffix = arch === "arm64" ? "arm64" : "x64";
     return join(resourcesDir, "deno", `deno-${platform}-${suffix}${ext}`);
   }
 
-  // Dev mode: use system deno
+  // Dev mode: prefer local bundled deno binary, fall back to system deno
+  const localDenoPath = join(app.getAppPath(), "resources", "deno", `deno-${platform}-${suffix}${ext}`);
+  if (existsSync(localDenoPath)) {
+    return localDenoPath;
+  }
+
   return "deno";
 }
 

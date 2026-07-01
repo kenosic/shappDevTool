@@ -1,11 +1,12 @@
 "use strict";
 Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 const electron = require("electron");
-const require$$0 = require("path");
+const path = require("path");
 const os = require("os");
 const promises = require("fs/promises");
-const require$$0$1 = require("fs");
-const require$$0$2 = require("child_process");
+const require$$0 = require("fs");
+const fflate = require("fflate");
+const require$$0$1 = require("child_process");
 const Database = require("better-sqlite3");
 const net = require("net");
 const url = require("url");
@@ -29,22 +30,24 @@ function _interopNamespaceDefault(e) {
   n.default = e;
   return Object.freeze(n);
 }
-const require$$0__namespace = /* @__PURE__ */ _interopNamespaceDefault(require$$0);
+const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 class HotReloader {
-  watcher = null;
-  appDir = null;
-  callbacks = null;
+  constructor() {
+    this.watcher = null;
+    this.appDir = null;
+    this.callbacks = null;
+  }
   start(appDir, callbacks) {
     this.stop();
     this.appDir = appDir;
     this.callbacks = callbacks;
-    const frontendDir = require$$0.join(appDir, "frontend");
-    const backendDir = require$$0.join(appDir, "backend");
-    const logicDir = require$$0.join(appDir, "logic");
+    const frontendDir = path.join(appDir, "frontend");
+    const backendDir = path.join(appDir, "backend");
+    const logicDir = path.join(appDir, "logic");
     const manifestFiles = [
-      require$$0.join(appDir, "manifest.json"),
-      require$$0.join(appDir, "app.manifest.json")
+      path.join(appDir, "manifest.json"),
+      path.join(appDir, "app.manifest.json")
     ];
     this.watcher = chokidar.watch([frontendDir, backendDir, logicDir, ...manifestFiles], {
       ignored: [
@@ -61,8 +64,8 @@ class HotReloader {
         pollInterval: 50
       }
     });
-    this.watcher.on("change", (path) => {
-      const normalized = path.replace(/\\/g, "/");
+    this.watcher.on("change", (path2) => {
+      const normalized = path2.replace(/\\/g, "/");
       if (normalized.endsWith("/manifest.json") || normalized.endsWith("/app.manifest.json")) {
         callbacks.onManifestChange?.();
       } else if (normalized.includes("/frontend/")) {
@@ -71,16 +74,16 @@ class HotReloader {
         callbacks.onBackendChange();
       }
     });
-    this.watcher.on("add", (path) => {
-      const normalized = path.replace(/\\/g, "/");
+    this.watcher.on("add", (path2) => {
+      const normalized = path2.replace(/\\/g, "/");
       if (normalized.includes("/frontend/")) {
         callbacks.onFrontendChange();
       } else if (normalized.includes("/backend/") || normalized.includes("/logic/")) {
         callbacks.onBackendChange();
       }
     });
-    this.watcher.on("unlink", (path) => {
-      const normalized = path.replace(/\\/g, "/");
+    this.watcher.on("unlink", (path2) => {
+      const normalized = path2.replace(/\\/g, "/");
       if (normalized.includes("/frontend/")) {
         callbacks.onFrontendChange();
       } else if (normalized.includes("/backend/") || normalized.includes("/logic/")) {
@@ -161,11 +164,6 @@ return h[0]+h[1]+h[2]+h[3]+'-'+h[4]+h[5]+'-'+h[6]+h[7]+'-'+h[8]+h[9]+'-'+h[10]+h
 }return'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16);});
 };
 }
-// localStorage/sessionStorage shim: sandbox blocks native storage API.
-// localStorage writes are relayed to the parent page via PostMessage so data
-// persists across page refreshes (parent stores in its own localStorage).
-// Initial values are synchronously pre-populated from the URL hash
-// (parent encodes stored data as #shapp-ls=<urlencoded-json>).
 (function(){
 function makeShim(relay){
 var s=Object.create(null);
@@ -181,12 +179,10 @@ _load:function(d){for(var k in d)if(Object.prototype.hasOwnProperty.call(d,k))s[
 };
 }
 var _ls=makeShim(true),_ss=makeShim(false);
-// Synchronously pre-populate localStorage from URL hash (#shapp-ls=<json>)
 try{
 var h=window.location.hash;
 if(h&&h.indexOf('#shapp-ls=')===0){var hd=JSON.parse(decodeURIComponent(h.slice(10)));if(hd&&typeof hd==='object')_ls._load(hd);}
 }catch(e){}
-// Also listen for async parent updates (e.g. storage_init_data if hash was absent)
 window.addEventListener('message',function(ev){
 try{
 var d=typeof ev.data==='string'?JSON.parse(ev.data):ev.data;
@@ -198,11 +194,8 @@ try{Object.defineProperty(host,name,{get:function(){return shim;},configurable:t
 }
 if(!defProp(window,'localStorage',_ls))defProp(Window.prototype,'localStorage',_ls);
 if(!defProp(window,'sessionStorage',_ss))defProp(Window.prototype,'sessionStorage',_ss);
-// Request parent to send back previously persisted localStorage data
 try{window.parent.postMessage(JSON.stringify({type:'shapp:storage_init_req'}),'*');}catch(e){}
 })();
-// Context init: inject __marsUser and mock navigator.geolocation from parent data.
-// Parent responds to shapp:context_init_req with shapp:context_init_data { user, geo }.
 (function(){
 function applyCtx(d){
   if(!d)return;
@@ -224,9 +217,6 @@ window.addEventListener('message',function(ev){
 });
 try{window.parent.postMessage(JSON.stringify({type:'shapp:context_init_req'}),'*');}catch(e){}
 })();
-// Platform bridge: __SHAPP_PLATFORM__ provides requestUserProfile, requestPermissions etc.
-// Defined here (synchronously, before mini-app code runs) so it's always available.
-// On mobile, injectedJavaScriptBeforeContentLoaded sets it first — skip in that case.
 if(!window.__SHAPP_PLATFORM__){
 (function(){
 var _n=0;
@@ -286,7 +276,7 @@ async function findManifest(dir) {
   const candidates = ["app.manifest.json", "manifest.json"];
   for (const name of candidates) {
     try {
-      const raw = await promises.readFile(require$$0.join(dir, name), "utf-8");
+      const raw = await promises.readFile(path.join(dir, name), "utf-8");
       try {
         return { manifest: JSON.parse(raw.replace(/^\uFEFF/, "")), resolvedDir: dir };
       } catch {
@@ -300,10 +290,10 @@ async function findManifest(dir) {
     const entries = await promises.readdir(dir, { withFileTypes: true });
     const subdirs = entries.filter((e) => e.isDirectory());
     for (const sub of subdirs) {
-      const subDir = require$$0.join(dir, sub.name);
+      const subDir = path.join(dir, sub.name);
       for (const name of candidates) {
         try {
-          const raw = await promises.readFile(require$$0.join(subDir, name), "utf-8");
+          const raw = await promises.readFile(path.join(subDir, name), "utf-8");
           try {
             return { manifest: JSON.parse(raw.replace(/^\uFEFF/, "")), resolvedDir: subDir };
           } catch {
@@ -317,7 +307,7 @@ async function findManifest(dir) {
   } catch (e) {
     if (e instanceof Error && e.message.includes("JSON 格式错误")) throw e;
   }
-  throw new Error(`未找到 app.manifest.json — 请确认所选目录是 Shapp 应用根目录`);
+  return null;
 }
 async function resolveEntries(dir, manifest) {
   const backendEntry = manifest.entry?.backend ?? "backend/main.ts";
@@ -325,7 +315,7 @@ async function resolveEntries(dir, manifest) {
   const result = [];
   for (const e of candidates) {
     try {
-      await promises.access(require$$0.join(dir, e));
+      await promises.access(path.join(dir, e));
       result.push(e);
     } catch {
     }
@@ -333,23 +323,67 @@ async function resolveEntries(dir, manifest) {
   return result.length > 0 ? result : [backendEntry];
 }
 async function loadFolderInternal(dirPath) {
-  const { manifest, resolvedDir } = await findManifest(dirPath);
+  const found = await findManifest(dirPath);
+  const resolvedDir = found?.resolvedDir ?? dirPath;
+  const manifest = found?.manifest ?? {
+    id: "",
+    name: path.basename(dirPath),
+    version: electron.app.getVersion(),
+    entry: {}
+  };
   const entries = await resolveEntries(resolvedDir, manifest);
   const recent = store.get("recentFolders");
   const filtered = recent.filter((r) => r !== resolvedDir);
   store.set("recentFolders", [resolvedDir, ...filtered].slice(0, 10));
   const frontendEntry = manifest.webPreview ?? manifest.entry?.frontend ?? "frontend";
-  const resolvedFrontendEntry = require$$0.join(resolvedDir, frontendEntry);
-  const frontendDir = require$$0.extname(frontendEntry) ? require$$0.dirname(resolvedFrontendEntry) : resolvedFrontendEntry;
+  const resolvedFrontendEntry = path.join(resolvedDir, frontendEntry);
+  const frontendDir = path.extname(frontendEntry) ? path.dirname(resolvedFrontendEntry) : resolvedFrontendEntry;
   const warnings = [];
-  if (!require$$0$1.existsSync(frontendDir)) {
+  if (!found) {
+    warnings.push("未找到清单文件，请在左侧填写应用信息后保存，将自动创建 app.manifest.json");
+  }
+  if (!require$$0.existsSync(frontendDir)) {
     warnings.push(`前端目录 "${frontendEntry}" 不存在，上传到平台时将被拒绝`);
   }
   if (manifest.engine === "cocos") {
-    const msg = checkCocosBundle(frontendDir, require$$0$1.existsSync);
+    const msg = checkCocosBundle(frontendDir, require$$0.existsSync);
     if (msg) warnings.push(msg);
   }
   return { dir: resolvedDir, frontendDir, manifest, entries, warnings };
+}
+const PACK_EXCLUDE = /* @__PURE__ */ new Set([
+  "node_modules",
+  ".git",
+  ".github",
+  ".claude",
+  ".shapp-sdk",
+  ".devtool",
+  "dist",
+  "out",
+  ".DS_Store",
+  "Thumbs.db"
+]);
+const PACK_EXCLUDE_EXT = /* @__PURE__ */ new Set([".log"]);
+async function collectFiles(baseDir, currentDir, result) {
+  const entries = await promises.readdir(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (PACK_EXCLUDE.has(entry.name)) continue;
+    if (PACK_EXCLUDE_EXT.has(path.extname(entry.name).toLowerCase())) continue;
+    const fullPath = path.join(currentDir, entry.name);
+    const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
+    if (entry.isDirectory()) {
+      await collectFiles(baseDir, fullPath, result);
+    } else if (entry.isFile()) {
+      const data = await promises.readFile(fullPath);
+      result[relPath] = [new Uint8Array(data), { level: 6 }];
+    }
+  }
+}
+async function buildZip(appDir) {
+  const files = {};
+  await collectFiles(appDir, appDir, files);
+  const zipped = fflate.zipSync(files);
+  return Buffer.from(zipped);
 }
 function registerPackageHandlers(win) {
   electron.ipcMain.handle("package:openFolder", async () => {
@@ -374,16 +408,35 @@ function registerPackageHandlers(win) {
   electron.ipcMain.handle("package:clearRecent", () => {
     store.set("recentFolders", []);
   });
+  electron.ipcMain.handle("package:build", async (_e, appDir) => {
+    const found = await findManifest(appDir);
+    const manifest = found?.manifest;
+    const appName = manifest?.name ?? path.basename(appDir);
+    const version = manifest?.version ?? electron.app.getVersion();
+    const defaultName = `${appName}-${version}.zip`;
+    const distDir = path.join(appDir, "dist");
+    await promises.mkdir(distDir, { recursive: true });
+    const { canceled, filePath } = await electron.dialog.showSaveDialog(win, {
+      title: "保存应用压缩包",
+      defaultPath: path.join(distDir, defaultName),
+      filters: [{ name: "ZIP Archive", extensions: ["zip"] }]
+    });
+    if (canceled || !filePath) return null;
+    const zipData = await buildZip(appDir);
+    await promises.writeFile(filePath, zipData);
+    return { outputPath: filePath };
+  });
   electron.ipcMain.handle("package:saveManifest", async (_e, dir, manifest) => {
     const candidates = ["app.manifest.json", "manifest.json"];
     for (const name of candidates) {
-      const filePath = require$$0.join(dir, name);
-      if (require$$0$1.existsSync(filePath)) {
+      const filePath = path.join(dir, name);
+      if (require$$0.existsSync(filePath)) {
         await promises.writeFile(filePath, JSON.stringify(manifest, null, 2), "utf-8");
         return;
       }
     }
-    throw new Error("manifest file not found");
+    await promises.mkdir(dir, { recursive: true });
+    await promises.writeFile(path.join(dir, "app.manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
   });
   const IMAGE_EXTS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]);
   const MIME_MAP = {
@@ -396,10 +449,10 @@ function registerPackageHandlers(win) {
   };
   electron.ipcMain.handle("package:readImage", async (_e, appDir, relPath) => {
     try {
-      const filePath = require$$0.normalize(require$$0.join(appDir, relPath));
-      if (!filePath.startsWith(require$$0.normalize(appDir))) return null;
+      const filePath = path.normalize(path.join(appDir, relPath));
+      if (!filePath.startsWith(path.normalize(appDir))) return null;
       const data = await promises.readFile(filePath);
-      const ext = require$$0.extname(filePath).toLowerCase();
+      const ext = path.extname(filePath).toLowerCase();
       const mime = MIME_MAP[ext] ?? "image/png";
       return `data:${mime};base64,${data.toString("base64")}`;
     } catch {
@@ -407,25 +460,25 @@ function registerPackageHandlers(win) {
     }
   });
   electron.ipcMain.handle("package:saveImageFile", async (_e, appDir, relPath, dataUrl) => {
-    const filePath = require$$0.normalize(require$$0.join(appDir, relPath));
-    if (!filePath.startsWith(require$$0.normalize(appDir))) throw new Error("Path traversal not allowed");
-    await promises.mkdir(require$$0.dirname(filePath), { recursive: true });
+    const filePath = path.normalize(path.join(appDir, relPath));
+    if (!filePath.startsWith(path.normalize(appDir))) throw new Error("Path traversal not allowed");
+    await promises.mkdir(path.dirname(filePath), { recursive: true });
     const base64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
     await promises.writeFile(filePath, Buffer.from(base64, "base64"));
   });
   electron.ipcMain.handle("package:listImages", async (_e, appDir, subPath) => {
     try {
-      const dirPath = require$$0.normalize(require$$0.join(appDir, subPath));
-      if (!dirPath.startsWith(require$$0.normalize(appDir))) return [];
+      const dirPath = path.normalize(path.join(appDir, subPath));
+      if (!dirPath.startsWith(path.normalize(appDir))) return [];
       const entries = await promises.readdir(dirPath, { withFileTypes: true });
-      return entries.filter((e) => e.isFile() && IMAGE_EXTS.has(require$$0.extname(e.name).toLowerCase())).map((e) => e.name).sort();
+      return entries.filter((e) => e.isFile() && IMAGE_EXTS.has(path.extname(e.name).toLowerCase())).map((e) => e.name).sort();
     } catch {
       return [];
     }
   });
   electron.ipcMain.handle("package:deleteImageFile", async (_e, appDir, relPath) => {
-    const filePath = require$$0.normalize(require$$0.join(appDir, relPath));
-    if (!filePath.startsWith(require$$0.normalize(appDir))) throw new Error("Path traversal not allowed");
+    const filePath = path.normalize(path.join(appDir, relPath));
+    if (!filePath.startsWith(path.normalize(appDir))) throw new Error("Path traversal not allowed");
     await promises.unlink(filePath);
   });
   electron.ipcMain.handle(
@@ -440,9 +493,9 @@ function registerPackageHandlers(win) {
       return Promise.all(
         filePaths.map(async (fp) => {
           const data = await promises.readFile(fp);
-          const ext = require$$0.extname(fp).toLowerCase();
+          const ext = path.extname(fp).toLowerCase();
           const mime = MIME_MAP[ext] ?? "image/png";
-          return { dataUrl: `data:${mime};base64,${data.toString("base64")}`, filename: require$$0.basename(fp) };
+          return { dataUrl: `data:${mime};base64,${data.toString("base64")}`, filename: path.basename(fp) };
         })
       );
     }
@@ -452,6 +505,7 @@ function startWatcher(appDir, win) {
   hotReloader.start(appDir, {
     onFrontendChange: () => {
       win.webContents.send("package:hotReload", { type: "frontend" });
+      refreshWarnings(appDir, win);
     },
     onBackendChange: () => {
       win.webContents.send("package:hotReload", { type: "backend" });
@@ -460,10 +514,18 @@ function startWatcher(appDir, win) {
       try {
         const pkg = await loadFolderInternal(appDir);
         win.webContents.send("package:manifestReload", pkg.manifest);
+        win.webContents.send("package:warningsChanged", pkg.warnings);
       } catch {
       }
     }
   });
+}
+async function refreshWarnings(appDir, win) {
+  try {
+    const pkg = await loadFolderInternal(appDir);
+    win.webContents.send("package:warningsChanged", pkg.warnings);
+  } catch {
+  }
 }
 let currentProcess = null;
 let getServerUrl = null;
@@ -473,32 +535,26 @@ function setServerUrlGetter(fn) {
 function getDenoPath() {
   const platform = process.platform;
   const arch = process.arch;
+  const ext = platform === "win32" ? ".exe" : "";
+  const suffix = arch === "arm64" ? "arm64" : "x64";
   if (electron.app.isPackaged) {
     const resourcesDir = process.resourcesPath;
-    const ext = platform === "win32" ? ".exe" : "";
-    const suffix = arch === "arm64" ? "arm64" : "x64";
-    return require$$0.join(resourcesDir, "deno", `deno-${platform}-${suffix}${ext}`);
+    return path.join(resourcesDir, "deno", `deno-${platform}-${suffix}${ext}`);
+  }
+  const localDenoPath = path.join(electron.app.getAppPath(), "resources", "deno", `deno-${platform}-${suffix}${ext}`);
+  if (require$$0.existsSync(localDenoPath)) {
+    return localDenoPath;
   }
   return "deno";
 }
-function getOpencodePath() {
-  const platform = process.platform;
-  const arch = process.arch;
-  if (electron.app.isPackaged) {
-    const ext = platform === "win32" ? ".exe" : "";
-    const suffix = arch === "arm64" ? "arm64" : "x64";
-    return require$$0.join(process.resourcesPath, "opencode", `opencode-${platform}-${suffix}${ext}`);
-  }
-  return "opencode";
-}
 function getRunnerScriptPath() {
   if (electron.app.isPackaged) {
-    return require$$0.join(process.resourcesPath, "deno-runner.ts");
+    return path.join(process.resourcesPath, "deno-runner.ts");
   }
-  return require$$0.join(electron.app.getAppPath(), "resources", "deno-runner.ts");
+  return path.join(electron.app.getAppPath(), "resources", "deno-runner.ts");
 }
 async function ensureDevtoolDir(appDir) {
-  const devtoolDir = require$$0.join(appDir, ".devtool");
+  const devtoolDir = path.join(appDir, ".devtool");
   await promises.mkdir(devtoolDir, { recursive: true });
   return devtoolDir;
 }
@@ -541,8 +597,8 @@ async function executeWithDeno(params, win) {
   const denoPath = getDenoPath();
   const runnerScript = getRunnerScriptPath();
   const devtoolDir = await ensureDevtoolDir(params.appDir);
-  const dbPath = require$$0.join(devtoolDir, "state.db");
-  if (electron.app.isPackaged && !require$$0$1.existsSync(denoPath)) {
+  const dbPath = path.join(devtoolDir, "state.db");
+  if (electron.app.isPackaged && !require$$0.existsSync(denoPath)) {
     return {
       ok: false,
       error: {
@@ -563,7 +619,7 @@ async function executeWithDeno(params, win) {
       dbPath,
       serverUrl: getServerUrl?.() ?? null
     });
-    const childProc = require$$0$2.spawn(
+    const childProc = require$$0$1.spawn(
       denoPath,
       ["run", "--allow-all", "--no-check", runnerScript],
       {
@@ -666,7 +722,7 @@ function openDb(dbPath) {
 }
 function registerKvHandlers() {
   electron.ipcMain.handle("kv:getTables", (_e, dbPath) => {
-    if (!require$$0$1.existsSync(dbPath)) return [];
+    if (!require$$0.existsSync(dbPath)) return [];
     try {
       const db = openDb(dbPath);
       const rows = db.prepare(
@@ -681,7 +737,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:getTableRows",
     (_e, dbPath, table, limit = 100, offset = 0) => {
-      if (!require$$0$1.existsSync(dbPath)) return { rows: [], total: 0 };
+      if (!require$$0.existsSync(dbPath)) return { rows: [], total: 0 };
       try {
         const db = openDb(dbPath);
         const tables = db.prepare(
@@ -706,7 +762,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:runQuery",
     (_e, dbPath, sql) => {
-      if (!require$$0$1.existsSync(dbPath)) return { columns: [], rows: [] };
+      if (!require$$0.existsSync(dbPath)) return { columns: [], rows: [] };
       try {
         const db = openDb(dbPath);
         const stmt = db.prepare(sql);
@@ -733,14 +789,14 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:exportDb",
     async (_e, dbPath) => {
-      if (!require$$0$1.existsSync(dbPath)) return null;
+      if (!require$$0.existsSync(dbPath)) return null;
       const result = await electron.dialog.showSaveDialog({
         title: "导出数据库",
         defaultPath: "app-state.db",
         filters: [{ name: "SQLite Database", extensions: ["db", "sqlite"] }]
       });
       if (result.canceled || !result.filePath) return null;
-      require$$0$1.copyFileSync(dbPath, result.filePath);
+      require$$0.copyFileSync(dbPath, result.filePath);
       return result.filePath;
     }
   );
@@ -756,7 +812,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:getAllEntries",
     (_e, dbPath) => {
-      if (!require$$0$1.existsSync(dbPath)) return [];
+      if (!require$$0.existsSync(dbPath)) return [];
       try {
         const db = openDb(dbPath);
         ensureKvTable(db);
@@ -786,7 +842,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:deleteEntry",
     (_e, dbPath, key) => {
-      if (!require$$0$1.existsSync(dbPath)) return;
+      if (!require$$0.existsSync(dbPath)) return;
       const db = openDb(dbPath);
       try {
         db.prepare("DELETE FROM shapp_kv WHERE key = ?").run(key);
@@ -798,7 +854,7 @@ function registerKvHandlers() {
   electron.ipcMain.handle(
     "kv:clearAll",
     (_e, dbPath) => {
-      if (!require$$0$1.existsSync(dbPath)) return;
+      if (!require$$0.existsSync(dbPath)) return;
       const db = openDb(dbPath);
       try {
         db.prepare("DELETE FROM shapp_kv").run();
@@ -864,13 +920,13 @@ function registerCaptureHandlers(win) {
       const { data, mimeType, filename, role, appDir } = params;
       let savePath;
       if (role === "cover" || role === "carousel") {
-        const destDir = require$$0.join(appDir, "assets", role === "cover" ? "." : "carousel");
+        const destDir = path.join(appDir, "assets", role === "cover" ? "." : "carousel");
         await promises.mkdir(destDir, { recursive: true });
         if (role === "cover") {
           const ext = filename.split(".").pop()?.toLowerCase() || "png";
-          savePath = require$$0.join(destDir, `cover.${ext}`);
+          savePath = path.join(destDir, `cover.${ext}`);
         } else {
-          savePath = require$$0.join(destDir, filename);
+          savePath = path.join(destDir, filename);
         }
       } else {
         const result = await electron.dialog.showSaveDialog({
@@ -1126,7 +1182,7 @@ const serializeObjectParam = ({ allowReserved, explode, name, style, value, valu
   return style === "label" || style === "matrix" ? separator + joinedValues : joinedValues;
 };
 const PATH_PARAM_RE = /\{[^{}]+\}/g;
-const defaultPathSerializer = ({ path, url: _url }) => {
+const defaultPathSerializer = ({ path: path2, url: _url }) => {
   let url2 = _url;
   const matches = _url.match(PATH_PARAM_RE);
   if (matches) {
@@ -1145,7 +1201,7 @@ const defaultPathSerializer = ({ path, url: _url }) => {
         name = name.substring(1);
         style = "matrix";
       }
-      const value = path[name];
+      const value = path2[name];
       if (value === void 0 || value === null) {
         continue;
       }
@@ -1176,11 +1232,11 @@ const defaultPathSerializer = ({ path, url: _url }) => {
   }
   return url2;
 };
-const getUrl = ({ baseUrl, path, query, querySerializer, url: _url }) => {
+const getUrl = ({ baseUrl, path: path2, query, querySerializer, url: _url }) => {
   const pathUrl = _url.startsWith("/") ? _url : `/${_url}`;
   let url2 = (baseUrl ?? "") + pathUrl;
-  if (path) {
-    url2 = defaultPathSerializer({ path, url: url2 });
+  if (path2) {
+    url2 = defaultPathSerializer({ path: path2, url: url2 });
   }
   let search = query ? querySerializer(query) : "";
   if (search.startsWith("?")) {
@@ -2509,8 +2565,8 @@ function requireWindows() {
   hasRequiredWindows = 1;
   windows = isexe;
   isexe.sync = sync;
-  var fs = require$$0$1;
-  function checkPathExt(path, options) {
+  var fs = require$$0;
+  function checkPathExt(path2, options) {
     var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
     if (!pathext) {
       return true;
@@ -2521,25 +2577,25 @@ function requireWindows() {
     }
     for (var i = 0; i < pathext.length; i++) {
       var p = pathext[i].toLowerCase();
-      if (p && path.substr(-p.length).toLowerCase() === p) {
+      if (p && path2.substr(-p.length).toLowerCase() === p) {
         return true;
       }
     }
     return false;
   }
-  function checkStat(stat, path, options) {
+  function checkStat(stat, path2, options) {
     if (!stat.isSymbolicLink() && !stat.isFile()) {
       return false;
     }
-    return checkPathExt(path, options);
+    return checkPathExt(path2, options);
   }
-  function isexe(path, options, cb) {
-    fs.stat(path, function(er, stat) {
-      cb(er, er ? false : checkStat(stat, path, options));
+  function isexe(path2, options, cb) {
+    fs.stat(path2, function(er, stat) {
+      cb(er, er ? false : checkStat(stat, path2, options));
     });
   }
-  function sync(path, options) {
-    return checkStat(fs.statSync(path), path, options);
+  function sync(path2, options) {
+    return checkStat(fs.statSync(path2), path2, options);
   }
   return windows;
 }
@@ -2550,14 +2606,14 @@ function requireMode() {
   hasRequiredMode = 1;
   mode = isexe;
   isexe.sync = sync;
-  var fs = require$$0$1;
-  function isexe(path, options, cb) {
-    fs.stat(path, function(er, stat) {
+  var fs = require$$0;
+  function isexe(path2, options, cb) {
+    fs.stat(path2, function(er, stat) {
       cb(er, er ? false : checkStat(stat, options));
     });
   }
-  function sync(path, options) {
-    return checkStat(fs.statSync(path), options);
+  function sync(path2, options) {
+    return checkStat(fs.statSync(path2), options);
   }
   function checkStat(stat, options) {
     return stat.isFile() && checkMode(stat, options);
@@ -2590,7 +2646,7 @@ function requireIsexe() {
   }
   isexe_1 = isexe;
   isexe.sync = sync;
-  function isexe(path, options, cb) {
+  function isexe(path2, options, cb) {
     if (typeof options === "function") {
       cb = options;
       options = {};
@@ -2600,7 +2656,7 @@ function requireIsexe() {
         throw new TypeError("callback not provided");
       }
       return new Promise(function(resolve, reject) {
-        isexe(path, options || {}, function(er, is) {
+        isexe(path2, options || {}, function(er, is) {
           if (er) {
             reject(er);
           } else {
@@ -2609,7 +2665,7 @@ function requireIsexe() {
         });
       });
     }
-    core(path, options || {}, function(er, is) {
+    core(path2, options || {}, function(er, is) {
       if (er) {
         if (er.code === "EACCES" || options && options.ignoreErrors) {
           er = null;
@@ -2619,9 +2675,9 @@ function requireIsexe() {
       cb(er, is);
     });
   }
-  function sync(path, options) {
+  function sync(path2, options) {
     try {
-      return core.sync(path, options || {});
+      return core.sync(path2, options || {});
     } catch (er) {
       if (options && options.ignoreErrors || er.code === "EACCES") {
         return false;
@@ -2638,7 +2694,7 @@ function requireWhich() {
   if (hasRequiredWhich) return which_1;
   hasRequiredWhich = 1;
   const isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-  const path = require$$0;
+  const path$1 = path;
   const COLON = isWindows ? ";" : ":";
   const isexe = requireIsexe();
   const getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -2676,7 +2732,7 @@ function requireWhich() {
         return opt.all && found.length ? resolve(found) : reject(getNotFoundError(cmd));
       const ppRaw = pathEnv[i];
       const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-      const pCmd = path.join(pathPart, cmd);
+      const pCmd = path$1.join(pathPart, cmd);
       const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
       resolve(subStep(p, i, 0));
     });
@@ -2703,7 +2759,7 @@ function requireWhich() {
     for (let i = 0; i < pathEnv.length; i++) {
       const ppRaw = pathEnv[i];
       const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-      const pCmd = path.join(pathPart, cmd);
+      const pCmd = path$1.join(pathPart, cmd);
       const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
       for (let j = 0; j < pathExt.length; j++) {
         const cur = p + pathExt[j];
@@ -2751,7 +2807,7 @@ var hasRequiredResolveCommand;
 function requireResolveCommand() {
   if (hasRequiredResolveCommand) return resolveCommand_1;
   hasRequiredResolveCommand = 1;
-  const path = require$$0;
+  const path$1 = path;
   const which = requireWhich();
   const getPathKey = requirePathKey();
   function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -2769,7 +2825,7 @@ function requireResolveCommand() {
     try {
       resolved = which.sync(parsed.command, {
         path: env[getPathKey({ env })],
-        pathExt: withoutPathExt ? path.delimiter : void 0
+        pathExt: withoutPathExt ? path$1.delimiter : void 0
       });
     } catch (e) {
     } finally {
@@ -2778,7 +2834,7 @@ function requireResolveCommand() {
       }
     }
     if (resolved) {
-      resolved = path.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+      resolved = path$1.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
     }
     return resolved;
   }
@@ -2832,8 +2888,8 @@ function requireShebangCommand() {
     if (!match) {
       return null;
     }
-    const [path, argument] = match[0].replace(/#! ?/, "").split(" ");
-    const binary = path.split("/").pop();
+    const [path2, argument] = match[0].replace(/#! ?/, "").split(" ");
+    const binary = path2.split("/").pop();
     if (binary === "env") {
       return argument;
     }
@@ -2846,7 +2902,7 @@ var hasRequiredReadShebang;
 function requireReadShebang() {
   if (hasRequiredReadShebang) return readShebang_1;
   hasRequiredReadShebang = 1;
-  const fs = require$$0$1;
+  const fs = require$$0;
   const shebangCommand2 = requireShebangCommand();
   function readShebang(command) {
     const size = 150;
@@ -2868,7 +2924,7 @@ var hasRequiredParse;
 function requireParse() {
   if (hasRequiredParse) return parse_1;
   hasRequiredParse = 1;
-  const path = require$$0;
+  const path$1 = path;
   const resolveCommand = requireResolveCommand();
   const escape = require_escape();
   const readShebang = requireReadShebang();
@@ -2893,7 +2949,7 @@ function requireParse() {
     const needsShell = !isExecutableRegExp.test(commandFile);
     if (parsed.options.forceShell || needsShell) {
       const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-      parsed.command = path.normalize(parsed.command);
+      parsed.command = path$1.normalize(parsed.command);
       parsed.command = escape.command(parsed.command);
       parsed.args = parsed.args.map((arg) => escape.argument(arg, needsDoubleEscapeMetaChars));
       const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -2979,7 +3035,7 @@ var hasRequiredCrossSpawn;
 function requireCrossSpawn() {
   if (hasRequiredCrossSpawn) return crossSpawn.exports;
   hasRequiredCrossSpawn = 1;
-  const cp = require$$0$2;
+  const cp = require$$0$1;
   const parse = requireParse();
   const enoent2 = requireEnoent();
   function spawn(command, args, options) {
@@ -3043,7 +3099,7 @@ async function createOpencodeServer(options) {
   const args = [`serve`, `--hostname=${options.hostname}`, `--port=${options.port}`];
   if (options.config?.logLevel)
     args.push(`--log-level=${options.config.logLevel}`);
-  const proc = launch(getOpencodePath(), args, {
+  const proc = launch(`opencode`, args, {
     env: {
       ...process.env,
       OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {})
@@ -3122,21 +3178,118 @@ async function createOpencode(options) {
     server
   };
 }
+let _logPath = null;
+function agentLog(msg) {
+  const ts = (/* @__PURE__ */ new Date()).toISOString();
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  if (!_logPath) {
+    try {
+      const dir = path__namespace.join(electron.app.getPath("userData"), "logs");
+      require$$0.mkdirSync(dir, { recursive: true });
+      _logPath = path__namespace.join(dir, "agent.log");
+    } catch {
+      return;
+    }
+  }
+  try {
+    require$$0.appendFileSync(_logPath, line + "\n", "utf-8");
+  } catch {
+  }
+}
 let _instance = null;
 let _startPromise = null;
 let _eventAbort = null;
+let _controlAbort = null;
+let _pendingQuestionResolve = null;
+let _pendingQuestionReject = null;
+let _pendingQuestionId = null;
 let _mainWindow = null;
 let _currentProjectDir = null;
 function getClient() {
   if (!_instance) throw new Error("OpenCode server not started");
   return _instance.client;
 }
+function getSkillsConfigDir() {
+  return electron.app.isPackaged ? path__namespace.join(process.resourcesPath, "github-config") : path__namespace.join(__dirname, "../../.github");
+}
+function ensureOpencodeWrapperDir() {
+  const bundledDir = electron.app.isPackaged ? path__namespace.join(process.resourcesPath, "opencode") : path__namespace.join(__dirname, "../../resources/opencode");
+  agentLog(`ensureOpencodeWrapperDir: packaged=${electron.app.isPackaged}, bundledDir=${bundledDir}, exists=${require$$0.existsSync(bundledDir)}`);
+  if (!require$$0.existsSync(bundledDir)) return null;
+  const wrapperDir = electron.app.isPackaged ? path__namespace.join(electron.app.getPath("userData"), "opencode-wrapper") : path__namespace.join(__dirname, "../../../node_modules/.cache/opencode-wrapper");
+  require$$0.mkdirSync(wrapperDir, { recursive: true });
+  if (process.platform === "win32") {
+    const src = path__namespace.join(bundledDir, "opencode-win32-x64.exe");
+    const dst = path__namespace.join(wrapperDir, "opencode.cmd");
+    agentLog(`ensureOpencodeWrapperDir: win32 src=${src}, srcExists=${require$$0.existsSync(src)}, dst=${dst}, dstExists=${require$$0.existsSync(dst)}`);
+    if (require$$0.existsSync(src) && !require$$0.existsSync(dst)) {
+      require$$0.writeFileSync(dst, `@"${src}" %*\r
+`, "utf-8");
+      agentLog(`ensureOpencodeWrapperDir: created wrapper cmd`);
+    }
+  } else {
+    const candidates = ["opencode-darwin-arm64", "opencode-darwin-x64", "opencode-linux-x64"];
+    for (const name of candidates) {
+      const src = path__namespace.join(bundledDir, name);
+      if (require$$0.existsSync(src)) {
+        const dst = path__namespace.join(wrapperDir, "opencode");
+        if (!require$$0.existsSync(dst)) {
+          require$$0.writeFileSync(dst, `#!/bin/sh
+exec "${src}" "$@"
+`, { mode: 493 });
+        }
+        break;
+      }
+    }
+  }
+  return wrapperDir;
+}
 async function spawnOpenCodeServer(port, cwd) {
+  agentLog(`spawnOpenCodeServer: port=${port}, cwd=${cwd}`);
+  const skillsConfigDir = getSkillsConfigDir();
+  const savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  if (require$$0.existsSync(skillsConfigDir)) {
+    process.env.OPENCODE_CONFIG_DIR = skillsConfigDir;
+    agentLog(`spawnOpenCodeServer: OPENCODE_CONFIG_DIR=${skillsConfigDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: skillsConfigDir NOT found: ${skillsConfigDir}`);
+  }
+  const savedPath = process.env.PATH;
+  const wrapperDir = ensureOpencodeWrapperDir();
+  if (wrapperDir) {
+    process.env.PATH = `${wrapperDir}${path__namespace.delimiter}${savedPath ?? ""}`;
+    agentLog(`spawnOpenCodeServer: PATH prepended with ${wrapperDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: NO wrapper dir — relying on system PATH`);
+  }
   const savedCwd = process.cwd();
   process.chdir(cwd);
-  const raw = createOpencode({ hostname: "127.0.0.1", port, timeout: 15e3 });
+  const raw = createOpencode({
+    hostname: "127.0.0.1",
+    port,
+    timeout: 15e3,
+    config: {
+      agent: {
+        build: { permission: { external_directory: "deny" } },
+        plan: { permission: { external_directory: "deny" } },
+        general: { permission: { external_directory: "deny" } }
+      }
+    }
+  });
   process.chdir(savedCwd);
+  if (savedPath !== void 0) {
+    process.env.PATH = savedPath;
+  } else {
+    delete process.env.PATH;
+  }
+  if (savedConfigDir !== void 0) {
+    process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
+  } else {
+    delete process.env.OPENCODE_CONFIG_DIR;
+  }
   const resolved = await raw;
+  agentLog(`spawnOpenCodeServer: server ready at ${resolved.server.url}`);
   const client2 = createOpencodeClient({ baseUrl: resolved.server.url, directory: cwd });
   return { server: resolved.server, client: client2 };
 }
@@ -3155,12 +3308,53 @@ function normalizeTitle(title) {
   if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(title)) return "New Session";
   return title;
 }
+async function injectSessionContext(client2, sessionId, projectDir) {
+  const dir = projectDir ?? _currentProjectDir ?? process.cwd();
+  const contextLines = [
+    `当前项目目录: ${dir}`,
+    "",
+    "## 重要说明（请严格遵守）",
+    "",
+    "### 1. 主动使用 Skill",
+    `你当前可以访问以下 Skill（位于 OPENCODE_CONFIG_DIR/skills/ 目录下）：`,
+    "- `mars-app-generator` — 生成 MARS 应用类微应用（WebView 前端 + TypeScript 后端）",
+    "- `mars-cocos-game-generator` — 生成 Cocos Creator 游戏类微应用",
+    "- `mars-unity-game-generator` — 生成 Unity 游戏类微应用",
+    "",
+    "当用户请求创建 MARS 应用或游戏时，**必须主动读取并使用对应的 Skill 文件**。",
+    "Skill 文件中包含了完整的协议规范、SDK API 用法、权限模型和打包约定。",
+    "**不要凭记忆生成 MARS 应用代码**，始终以 Skill 文件中的规范为准。",
+    "",
+    "### 2. 文件直接放在当前项目目录",
+    `**所有生成的应用文件必须直接放在当前项目目录中：\`${dir}\`**`,
+    "- ❌ 不要创建新的子目录（如 `my-app/`, `todo-app/` 等）",
+    "- ✅ 直接在当前目录下创建 `manifest.json`、`permissions.json`、`frontend/index.html`、`backend/main.ts` 等文件",
+    "- 如果当前目录已有文件，先了解现有结构再决定如何修改",
+    "- 善用 `list_dir`、`read_file` 等工具了解当前目录结构",
+    "",
+    "### 3. 其他注意事项",
+    "- 使用 `manage_todo_list` 规划复杂任务",
+    "- 后端代码必须使用 `@mars/sdk` 而非 `@mars/sdk/common`",
+    "- 数据库操作前必须先 `CREATE TABLE IF NOT EXISTS`",
+    "- 每个 ZIP 包文件数上限 2000，避免生成大量独立数据文件"
+  ];
+  const contextText = contextLines.join("\n");
+  agentLog(`injectSessionContext: sending context to ${sessionId}, len=${contextText.length}`);
+  await client2.session.promptAsync({
+    path: { id: sessionId },
+    body: {
+      noReply: true,
+      parts: [{ type: "text", text: contextText }]
+    }
+  });
+  agentLog(`injectSessionContext: done for ${sessionId}`);
+}
 const AGENT_STORE_KEY = "agentPanel";
 const AGENT_DEFAULTS = {
   width: 360,
   visible: true,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   mode: "build",
   encryptedKeys: {}
 };
@@ -3173,18 +3367,86 @@ function setAgentStore(data) {
   const current = getAgentStore();
   store2.set(AGENT_STORE_KEY, { ...current, ...data });
 }
+function startControlPolling(win) {
+  console.log("[ControlPoll] start, dir =", _currentProjectDir);
+  if (_controlAbort) _controlAbort.abort();
+  _controlAbort = new AbortController();
+  const signal = _controlAbort.signal;
+  (async () => {
+    while (!signal.aborted) {
+      try {
+        const client2 = getClient();
+        console.log("[ControlPoll] calling tui.control.next()");
+        const result = await client2.tui.control.next(
+          _currentProjectDir ? { query: { directory: _currentProjectDir } } : {}
+        );
+        if (signal.aborted) break;
+        console.log("[ControlPoll] next() returned, error:", result.error, "data keys:", result.data ? Object.keys(result.data) : null);
+        const data = result.data;
+        if (!data) {
+          console.log("[ControlPoll] no data, retrying after 500ms");
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        const body = data.body;
+        console.log("[ControlPoll] path:", data.path, "body type:", typeof body, "has questions:", body && Array.isArray(body.questions));
+        if (body && Array.isArray(body.questions)) {
+          _pendingQuestionReject?.(new Error("superseded"));
+          _pendingQuestionResolve = null;
+          _pendingQuestionReject = null;
+          console.log("[ControlPoll] question received, questions count:", body.questions.length, "sending to renderer");
+          if (!win.isDestroyed()) {
+            win.webContents.send("agent:question", body);
+          }
+          console.log("[ControlPoll] waiting for user answer...");
+          const answers = await new Promise((resolve, reject) => {
+            _pendingQuestionResolve = resolve;
+            _pendingQuestionReject = reject;
+          });
+          _pendingQuestionResolve = null;
+          _pendingQuestionReject = null;
+          console.log("[ControlPoll] got answers:", JSON.stringify(answers).slice(0, 300));
+          if (!signal.aborted) {
+            console.log("[ControlPoll] calling tui.control.response()");
+            const resp = await getClient().tui.control.response({
+              body: { answers },
+              ..._currentProjectDir ? { query: { directory: _currentProjectDir } } : {}
+            });
+            console.log("[ControlPoll] response() result, error:", resp.error, "data:", resp.data);
+          } else {
+            console.warn("[ControlPoll] signal aborted before response, answers NOT submitted");
+          }
+        } else {
+          console.log("[ControlPoll] non-question control body, continuing loop");
+        }
+      } catch (err) {
+        if (signal.aborted) break;
+        console.error("[ControlPoll] error in loop:", err);
+        await new Promise((r) => setTimeout(r, 2e3));
+      }
+    }
+    console.log("[ControlPoll] loop exited, aborted =", signal.aborted);
+  })().catch((err) => console.error("[ControlPoll] fatal:", err));
+}
 async function startEventSubscription(win) {
+  agentLog(`startEventSubscription: starting, serverUrl=${_instance?.server.url}`);
   if (_eventAbort) {
     _eventAbort.abort();
+    agentLog(`startEventSubscription: aborted previous subscription`);
   }
   _eventAbort = new AbortController();
   const client2 = getClient();
   try {
     const response = await client2.event.subscribe();
+    agentLog(`startEventSubscription: SSE connected, entering event loop`);
+    let eventCount = 0;
     for await (const event of response.stream) {
       if (_eventAbort?.signal.aborted) break;
+      eventCount++;
       const e = event;
-      console.log("[Agent][SSE]", JSON.stringify({ type: e?.type, properties: e?.properties }));
+      if (eventCount % 50 === 0 || e?.type === "session.error" || e?.type === "session.idle") {
+        agentLog(`SSE event #${eventCount}: type=${e?.type}, props=${JSON.stringify(e?.properties).slice(0, 200)}`);
+      }
       if (e?.type === "permission.asked") {
         const { id: permissionID, sessionID } = e.properties ?? {};
         if (permissionID && sessionID) {
@@ -3197,13 +3459,24 @@ async function startEventSubscription(win) {
         }
         continue;
       }
+      if (e?.type === "question.asked") {
+        _pendingQuestionId = e.properties?.id ?? null;
+        console.log("[Agent][SSE] question.asked, stored requestID:", _pendingQuestionId);
+        if (!win.isDestroyed()) {
+          win.webContents.send("agent:question", e.properties);
+        }
+      }
+      if (e?.type === "question.replied" || e?.type === "question.rejected") {
+        console.log("[Agent][SSE]", e.type, ", clearing pendingQuestionId");
+        _pendingQuestionId = null;
+      }
       if (!win.isDestroyed()) {
         win.webContents.send("agent:event", event);
       }
     }
   } catch (err) {
     if (!_eventAbort?.signal.aborted) {
-      console.error("[Agent] Event subscription error:", err);
+      agentLog(`startEventSubscription: SSE error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
@@ -3239,18 +3512,20 @@ function getMimeType(ext) {
 function registerAgentHandlers(win) {
   _mainWindow = win;
   electron.ipcMain.handle("agent:startServer", async () => {
+    agentLog(`agent:startServer called, existing instance=${!!_instance}, startPromise=${!!_startPromise}`);
     if (_instance) return { ok: true };
     if (!_startPromise) {
       _startPromise = (async () => {
         try {
           const port = await findFreePort();
           const cwd = _currentProjectDir ?? process.cwd();
+          agentLog(`agent:startServer: spawning on port ${port}, cwd=${cwd}`);
           _instance = await spawnOpenCodeServer(port, cwd);
-          console.log("[Agent] OpenCode server started at", _instance.server.url, "cwd:", cwd);
+          agentLog(`agent:startServer: server ready at ${_instance.server.url}, cwd=${cwd}`);
           return { ok: true };
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          console.error("[Agent] Failed to start OpenCode server:", error);
+          agentLog(`agent:startServer: FAILED — ${error}`);
           return { ok: false, error };
         } finally {
           _startPromise = null;
@@ -3275,7 +3550,8 @@ function registerAgentHandlers(win) {
       _instance = await spawnOpenCodeServer(port, dir);
       console.log("[Agent] OpenCode restarted for project:", dir, "at", _instance.server.url);
       if (_mainWindow && !_mainWindow.isDestroyed()) {
-        await startEventSubscription(_mainWindow);
+        startEventSubscription(_mainWindow);
+        startControlPolling(_mainWindow);
       }
     } catch (err) {
       console.error("[Agent] Failed to restart OpenCode for project:", err);
@@ -3297,6 +3573,9 @@ function registerAgentHandlers(win) {
     const result = await client2.session.create(opts);
     if (result.error) throw new Error(String(result.error));
     const s = result.data;
+    injectSessionContext(client2, s.id, directory).catch((err) => {
+      agentLog(`injectSessionContext failed for ${s.id}: ${err instanceof Error ? err.message : String(err)}`);
+    });
     return { id: s.id, title: normalizeTitle(s.title), createdAt: s.time?.created ?? Date.now() };
   });
   electron.ipcMain.handle("agent:listSessions", async () => {
@@ -3342,6 +3621,14 @@ function registerAgentHandlers(win) {
               status: state?.status ?? "pending"
             }];
           }
+          if (p.type === "file") {
+            return [{
+              type: "file",
+              mimeType: p.mimeType ?? p.mime ?? "",
+              url: p.url ?? "",
+              filename: p.filename ?? p.name ?? ""
+            }];
+          }
           return [];
         }),
         createdAt: item.info.time?.created ?? Date.now()
@@ -3369,8 +3656,8 @@ function registerAgentHandlers(win) {
     });
     if (result.canceled) return [];
     return result.filePaths.map((filePath) => ({
-      name: require$$0__namespace.basename(filePath),
-      mime: getMimeType(require$$0__namespace.extname(filePath).toLowerCase().slice(1)),
+      name: path__namespace.basename(filePath),
+      mime: getMimeType(path__namespace.extname(filePath).toLowerCase().slice(1)),
       url: url.pathToFileURL(filePath).href
     }));
   });
@@ -3379,6 +3666,7 @@ function registerAgentHandlers(win) {
     if (typeof text !== "string" || text.trim() === "") throw new Error("Empty message");
     const client2 = getClient();
     const agentData = getAgentStore();
+    agentLog(`sendPrompt: sessionId=${sessionId}, provider=${agentData.selectedProvider}, model=${agentData.selectedModel}, mode=${mode2}, textLen=${text.length}, serverUrl=${_instance?.server.url}`);
     const fileParts = (files ?? []).map((f) => ({
       type: "file",
       mime: f.mime,
@@ -3395,7 +3683,18 @@ function registerAgentHandlers(win) {
         ...mode2 ? { agent: mode2 } : {},
         parts: [...fileParts, { type: "text", text }]
       }
+    }).then((result) => {
+      agentLog(`sendPrompt: response received, ok=${!result?.error}, error=${JSON.stringify(result?.error)}`);
+      if (result?.error) {
+        if (!win.isDestroyed()) {
+          win.webContents.send("agent:event", {
+            type: "session.error",
+            properties: { sessionID: sessionId, error: { name: "PromptError", data: { message: typeof result.error === "string" ? result.error : JSON.stringify(result.error) } } }
+          });
+        }
+      }
     }).catch((err) => {
+      agentLog(`sendPrompt: network/throw error: ${err.message}`);
       if (!win.isDestroyed()) {
         win.webContents.send("agent:event", {
           type: "session.error",
@@ -3416,8 +3715,13 @@ function registerAgentHandlers(win) {
     const client2 = getClient();
     try {
       const result = await client2.config.providers();
-      if (result.error) return [];
+      agentLog(`listProviders: result.error=${!!result.error}, data keys=${result.data ? Object.keys(result.data).join(",") : "null"}`);
+      if (result.error) {
+        agentLog(`listProviders: error detail=${JSON.stringify(result.error)}`);
+        return [];
+      }
       const providers = result.data?.providers ?? [];
+      agentLog(`listProviders: got ${providers.length} providers`);
       return providers.map((p) => ({
         id: p.id ?? p.name,
         name: p.name ?? p.id,
@@ -3427,7 +3731,8 @@ function registerAgentHandlers(win) {
           name: m.name ?? m.id
         }))
       }));
-    } catch {
+    } catch (err) {
+      agentLog(`listProviders: exception: ${err?.message ?? err}`);
       return [];
     }
   });
@@ -3440,6 +3745,7 @@ function registerAgentHandlers(win) {
       ]);
       const cfg = cfgResult.data;
       const provData = provResult.data;
+      agentLog(`getConfig: cfg keys=${cfg ? Object.keys(cfg).join(",") : "null"}, provData keys=${provData ? Object.keys(provData).join(",") : "null"}`);
       const rawProviders = provData?.providers ?? [];
       const defaults = provData?.default ?? {};
       const cfgModel = cfg?.model ?? "";
@@ -3447,6 +3753,7 @@ function registerAgentHandlers(win) {
       const defaultEntries = Object.entries(defaults);
       const defaultProviderId = cfgProvider || (defaultEntries[0]?.[0] ?? "");
       const defaultModelId = cfgModelId || (defaultEntries[0]?.[1] ?? "");
+      agentLog(`getConfig: cfgModel=${cfgModel}, defaultProviderId=${defaultProviderId}, defaultModelId=${defaultModelId}, defaultEntries=${JSON.stringify(defaultEntries)}`);
       const freeModels = [];
       const providerGroups = [];
       for (const p of rawProviders) {
@@ -3470,7 +3777,8 @@ function registerAgentHandlers(win) {
         });
       }
       return { freeModels, providerGroups, defaultProviderId, defaultModelId };
-    } catch {
+    } catch (err) {
+      agentLog(`getConfig: exception: ${err?.message ?? err}`);
       return { freeModels: [], providerGroups: [], defaultProviderId: "", defaultModelId: "" };
     }
   });
@@ -3527,17 +3835,65 @@ function registerAgentHandlers(win) {
   electron.ipcMain.handle("agent:setPrefs", (_e, prefs) => {
     setAgentStore(prefs);
   });
-  electron.ipcMain.handle("agent:subscribe", async () => {
-    await startEventSubscription(win);
+  electron.ipcMain.handle("agent:answerQuestion", async (_e, answers) => {
+    console.log("[IPC] agent:answerQuestion, pendingQuestionId =", _pendingQuestionId, "answers:", JSON.stringify(answers).slice(0, 300));
+    if (!_pendingQuestionId) {
+      console.warn("[IPC] agent:answerQuestion: no pending question ID — cannot submit");
+      return;
+    }
+    if (!_instance) {
+      console.warn("[IPC] agent:answerQuestion: no server instance");
+      return;
+    }
+    const requestID = _pendingQuestionId;
+    _pendingQuestionId = null;
+    const serverBase = _instance.server.url.replace(/\/$/, "");
+    const queryStr = _currentProjectDir ? `?directory=${encodeURIComponent(_currentProjectDir)}` : "";
+    const url2 = `${serverBase}/question/${requestID}/reply${queryStr}`;
+    try {
+      console.log("[IPC] POST", url2);
+      const resp = await fetch(url2, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers })
+      });
+      console.log("[IPC] question.reply status:", resp.status, resp.ok);
+      if (!resp.ok) {
+        const body = await resp.text();
+        console.warn("[IPC] question.reply error body:", body);
+      }
+    } catch (err) {
+      console.error("[IPC] question.reply fetch failed:", err);
+    }
+  });
+  electron.ipcMain.handle("agent:subscribe", () => {
+    startEventSubscription(win);
+    startControlPolling(win);
   });
   electron.ipcMain.handle("agent:unsubscribe", () => {
     _eventAbort?.abort();
     _eventAbort = null;
   });
+  electron.ipcMain.handle("agent:getLog", () => {
+    if (!_logPath || !require$$0.existsSync(_logPath)) return { path: null, tail: "" };
+    try {
+      const content = require$$0.readFileSync(_logPath, "utf-8");
+      const lines = content.split("\n");
+      const tail = lines.slice(-200).join("\n");
+      return { path: _logPath, tail };
+    } catch {
+      return { path: _logPath, tail: "" };
+    }
+  });
 }
 function stopAgentSubscription() {
   _eventAbort?.abort();
   _eventAbort = null;
+  _controlAbort?.abort();
+  _controlAbort = null;
+  _pendingQuestionReject?.(new Error("server stopped"));
+  _pendingQuestionResolve = null;
+  _pendingQuestionReject = null;
   if (_instance) {
     _instance.server.close();
     _instance = null;
@@ -3545,12 +3901,14 @@ function stopAgentSubscription() {
   _currentProjectDir = null;
 }
 class StaticServer {
-  server = null;
-  port = 0;
-  appDir = null;
-  frontendDir = null;
+  constructor() {
+    this.server = null;
+    this.port = 0;
+    this.appDir = null;
+    this.frontendDir = null;
+  }
   async start(appDir, frontendDir) {
-    const resolvedFrontendDir = require$$0.normalize(frontendDir ?? require$$0.join(appDir, "frontend"));
+    const resolvedFrontendDir = path.normalize(frontendDir ?? path.join(appDir, "frontend"));
     if (this.server && this.appDir === appDir && this.frontendDir === resolvedFrontendDir) {
       return { url: this.getUrl(), port: this.port };
     }
@@ -3601,27 +3959,27 @@ class StaticServer {
         res.end("Not found");
         return;
       }
-      const storageBase = require$$0.join(this.appDir, ".devtool", "storage");
-      const storageFilePath = require$$0.join(storageBase, safeKey);
+      const storageBase = path.join(this.appDir, ".devtool", "storage");
+      const storageFilePath = path.join(storageBase, safeKey);
       if (!storageFilePath.startsWith(storageBase)) {
         res.writeHead(403);
         res.end("Forbidden");
         return;
       }
-      if (!require$$0$1.existsSync(storageFilePath)) {
+      if (!require$$0.existsSync(storageFilePath)) {
         res.writeHead(404);
         res.end("Not found");
         return;
       }
       try {
-        const stat = require$$0$1.statSync(storageFilePath);
+        const stat = require$$0.statSync(storageFilePath);
         res.writeHead(200, {
           "Content-Type": getMimeType$1(storageFilePath),
           "Content-Length": stat.size,
           "Cache-Control": "no-cache",
           "Access-Control-Allow-Origin": "*"
         });
-        require$$0$1.createReadStream(storageFilePath).pipe(res);
+        require$$0.createReadStream(storageFilePath).pipe(res);
       } catch {
         res.writeHead(500);
         res.end("Internal server error");
@@ -3629,21 +3987,21 @@ class StaticServer {
       return;
     }
     const relPath = urlPath === "/" ? "/index.html" : urlPath;
-    const servingDir = this.frontendDir ?? require$$0.join(this.appDir, "frontend");
-    const filePath = require$$0.join(servingDir, relPath);
+    const servingDir = this.frontendDir ?? path.join(this.appDir, "frontend");
+    const filePath = path.join(servingDir, relPath);
     if (!filePath.startsWith(servingDir)) {
       res.writeHead(403);
       res.end("Forbidden");
       return;
     }
-    if (!require$$0$1.existsSync(filePath)) {
+    if (!require$$0.existsSync(filePath)) {
       if (!shouldSpaFallback(relPath)) {
         res.writeHead(404);
         res.end("Not found");
         return;
       }
-      const indexPath = require$$0.join(servingDir, "index.html");
-      if (require$$0$1.existsSync(indexPath)) {
+      const indexPath = path.join(servingDir, "index.html");
+      if (require$$0.existsSync(indexPath)) {
         this.serveFile(indexPath, res);
       } else {
         res.writeHead(404);
@@ -3655,10 +4013,10 @@ class StaticServer {
   }
   serveFile(filePath, res) {
     try {
-      const stat = require$$0$1.statSync(filePath);
+      const stat = require$$0.statSync(filePath);
       if (stat.isDirectory()) {
-        const indexPath = require$$0.join(filePath, "index.html");
-        if (require$$0$1.existsSync(indexPath)) {
+        const indexPath = path.join(filePath, "index.html");
+        if (require$$0.existsSync(indexPath)) {
           this.serveFile(indexPath, res);
         } else {
           res.writeHead(403);
@@ -3666,11 +4024,11 @@ class StaticServer {
         }
         return;
       }
-      const ext = require$$0.extname(filePath).toLowerCase();
+      const ext = path.extname(filePath).toLowerCase();
       const isHtml = ext === ".html" || ext === ".htm";
       const contentType = getMimeType$1(filePath);
       if (isHtml) {
-        const raw = require$$0$1.readFileSync(filePath, "utf-8");
+        const raw = require$$0.readFileSync(filePath, "utf-8");
         const bootstrapped = injectBootstrap(raw);
         const HIDE_SCROLLBAR = `<style>::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>`;
         const html = bootstrapped.includes("</head>") ? bootstrapped.replace("</head>", HIDE_SCROLLBAR + "</head>") : bootstrapped.includes("<body") ? bootstrapped.replace("<body", HIDE_SCROLLBAR + "<body") : HIDE_SCROLLBAR + bootstrapped;
@@ -3690,7 +4048,7 @@ class StaticServer {
         "Cache-Control": "no-cache",
         "Access-Control-Allow-Origin": "*"
       });
-      const stream = require$$0$1.createReadStream(filePath);
+      const stream = require$$0.createReadStream(filePath);
       stream.pipe(res);
       stream.on("error", () => {
         res.end();
@@ -3704,17 +4062,15 @@ class StaticServer {
 class Store {
   constructor(defaults) {
     this.defaults = defaults;
-    const dir = require$$0.join(electron.app.getPath("userData"), "devtool");
-    require$$0$1.mkdirSync(dir, { recursive: true });
-    this.filePath = require$$0.join(dir, "preferences.json");
+    const dir = path.join(electron.app.getPath("userData"), "devtool");
+    require$$0.mkdirSync(dir, { recursive: true });
+    this.filePath = path.join(dir, "preferences.json");
     this.data = this.load();
   }
-  data;
-  filePath;
   load() {
     try {
-      if (require$$0$1.existsSync(this.filePath)) {
-        const raw = require$$0$1.readFileSync(this.filePath, "utf-8");
+      if (require$$0.existsSync(this.filePath)) {
+        const raw = require$$0.readFileSync(this.filePath, "utf-8");
         const parsed = JSON.parse(raw);
         return { ...this.defaults, ...parsed };
       }
@@ -3724,7 +4080,7 @@ class Store {
   }
   save() {
     try {
-      require$$0$1.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
+      require$$0.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
     } catch {
     }
   }
@@ -3829,7 +4185,7 @@ const store = {
 const staticServer = new StaticServer();
 let inMainMode = false;
 function getWindowIconPath() {
-  return electron.app.isPackaged ? require$$0.join(process.resourcesPath, "logo.ico") : require$$0.join(__dirname, "../../resources/logo.ico");
+  return electron.app.isPackaged ? path.join(process.resourcesPath, "logo.ico") : path.join(__dirname, "../../resources/logo.ico");
 }
 function createWindow() {
   const theme = store.get("theme");
@@ -3844,7 +4200,7 @@ function createWindow() {
     frame: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     webPreferences: {
-      preload: require$$0.join(__dirname, "../preload/index.js"),
+      preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -3857,7 +4213,7 @@ function createWindow() {
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    mainWindow.loadFile(require$$0.join(__dirname, "../renderer/index.html"));
+    mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
   mainWindow.once("ready-to-show", () => {
     mainWindow.center();
@@ -3941,8 +4297,8 @@ electron.app.whenReady().then(() => {
       electron.shell.openExternal(url2);
     }
   });
-  electron.ipcMain.handle("shell:showItemInFolder", (_e, path) => {
-    electron.shell.showItemInFolder(path);
+  electron.ipcMain.handle("shell:showItemInFolder", (_e, path2) => {
+    electron.shell.showItemInFolder(path2);
   });
   initUpdater(win);
   electron.app.on("activate", () => {

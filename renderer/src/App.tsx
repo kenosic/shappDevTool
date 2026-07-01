@@ -13,6 +13,7 @@ export default function App() {
   const t = useT();
   const current = usePackageStore((s) => s.current);
   const setCurrent = usePackageStore((s) => s.setCurrent);
+  const setWarnings = usePackageStore((s) => s.setWarnings);
   const setRecentFolders = usePackageStore((s) => s.setRecentFolders);
   const appendLog = useLogStore((s) => s.append);
   const setExecStatus = useExecutionStore((s) => s.setStatus);
@@ -46,6 +47,12 @@ export default function App() {
     });
     return unsub;
   }, [current, appendLog]);
+
+  // Re-evaluate warnings on project reload (e.g. frontend dir or manifest created)
+  useEffect(() => {
+    if (!current) return;
+    return window.devtool.package.onWarningsChanged(setWarnings);
+  }, [current, setWarnings]);
 
   // Resize window when switching between welcome and main layout
   const isInitialMount = useRef(true);

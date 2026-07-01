@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import QRCode from "qrcode";
 
 import { usePackageStore } from "../../stores/packageStore";
 import { useExecutionStore } from "../../stores/executionStore";
+import { useLogStore } from "../../stores/logStore";
 import CapturePanel from "../modals/CapturePanel";
 import { useT } from "../../i18n";
+import { localFilenameTimestamp, currentTimeHHMM } from "../../utils/time";
 import styles from "./PreviewTab.module.css";
 
 // Device preset with full iOS layout metrics (all in pt / logical pixels)
@@ -87,6 +90,9 @@ export default function PreviewTab() {
   const pkg = usePackageStore((s) => s.current);
   const mockContext = useExecutionStore((s) => s.mockContext);
   const [serverUrl, setServerUrl] = useState<string | null>(null);
+  const [lanUrl, setLanUrl] = useState<string | null>(null);
+  const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<"frontend" | "admin">("frontend");
   const [device, setDevice] = useState<DevicePreset>(DEVICES.find(d => d.label === "iPhone 16 Pro") ?? DEVICES[0]);
   const [zoom, setZoom] = useState<ZoomLevel>(0.75);
@@ -98,6 +104,7 @@ export default function PreviewTab() {
     filename: string;
   } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [statusTime, setStatusTime] = useState(currentTimeHHMM);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
@@ -110,11 +117,22 @@ export default function PreviewTab() {
   pkgRef.current = pkg;
   const mockContextRef = useRef(mockContext);
   mockContextRef.current = mockContext;
+  // Keep a ref to serverUrl so the hot-reload handler never reads a stale value
+  const serverUrlRef = useRef(serverUrl);
+  serverUrlRef.current = serverUrl;
+  // Debounce pending hot-reload to avoid race: src="" snapshot gets used as reload target
+  const pendingHotReloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     appStorageRef.current = {};
     setPreviewMode("frontend");
   }, [pkg]);
+
+  // Live status bar clock
+  useEffect(() => {
+    const timer = setInterval(() => setStatusTime(currentTimeHHMM()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
@@ -180,11 +198,22 @@ export default function PreviewTab() {
                 target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: result.data, error: null }), "*");
               } else {
                 target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: result.error }), "*");
+                // Log backend errors to the Log tab for debugging
+                useLogStore.getState().append({
+                  level: "error",
+                  ts: Date.now(),
+                  message: `[RPC] ${method} → [${result.error?.code ?? "UNKNOWN"}] ${result.error?.message ?? "Unknown error"}`,
+                });
               }
             })
             .catch((err: Error) => {
               const target = iframeRef.current?.contentWindow;
               target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: { code: "EXECUTION_ERROR", message: err.message } }), "*");
+              useLogStore.getState().append({
+                level: "error",
+                ts: Date.now(),
+                message: `[RPC] ${method} → [EXECUTION_ERROR] ${err.message}`,
+              });
             });
           break;
         }
@@ -214,20 +243,41 @@ export default function PreviewTab() {
     } else {
       servingDir = pkg.frontendDir;
     }
-    window.devtool.server.start(pkg.dir, servingDir).then(({ url }) => setServerUrl(url));
-    return () => { window.devtool.server.stop(); setServerUrl(null); };
+    window.devtool.server.start(pkg.dir, servingDir).then(({ url }) => {
+      setServerUrl(url);
+      // Fetch LAN URL after server has started
+      window.devtool.server.getLanUrl().then((lan) => setLanUrl(lan));
+    });
+    return () => {
+      window.devtool.server.stop();
+      setServerUrl(null);
+      setLanUrl(null);
+      setShowQr(false);
+    };
   }, [pkg, previewMode]);
 
   useEffect(() => {
     if (!pkg) return;
     const unsubscribe = window.devtool.package.onHotReload((event) => {
-      if (event.type === "frontend" && iframeRef.current) {
-        const currentSrc = iframeRef.current.src;
-        iframeRef.current.src = "";
-        setTimeout(() => { if (iframeRef.current) iframeRef.current.src = currentSrc; }, 50);
+      if (event.type === "frontend") {
+        // Cancel any pending reload; always restore from the latest serverUrl ref
+        if (pendingHotReloadRef.current) clearTimeout(pendingHotReloadRef.current);
+        if (iframeRef.current) iframeRef.current.src = "";
+        pendingHotReloadRef.current = setTimeout(() => {
+          pendingHotReloadRef.current = null;
+          if (iframeRef.current && serverUrlRef.current) {
+            iframeRef.current.src = serverUrlRef.current;
+          }
+        }, 100);
       }
     });
-    return unsubscribe;
+    return () => {
+      if (pendingHotReloadRef.current) {
+        clearTimeout(pendingHotReloadRef.current);
+        pendingHotReloadRef.current = null;
+      }
+      unsubscribe();
+    };
   }, [pkg]);
 
   const handleReload = useCallback(() => {
@@ -245,6 +295,26 @@ export default function PreviewTab() {
     if (serverUrl) window.devtool.shell.openExternal(serverUrl);
   }, [serverUrl]);
 
+  const handleShowQr = useCallback(async () => {
+    // Always re-fetch the LAN URL fresh from the main process — network
+    // interfaces may have changed since server start, or the initial
+    // detection may have returned the wrong adapter.
+    const url = await window.devtool.server.getLanUrl();
+    if (!url) {
+      setQrDataUrl(null);
+      setShowQr(true);
+      return;
+    }
+    try {
+      const dataUrl = await QRCode.toDataURL(url, { width: 200, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
+      setQrDataUrl(dataUrl);
+      setLanUrl(url);
+    } catch {
+      setQrDataUrl(null);
+    }
+    setShowQr(true);
+  }, []);
+
   const handleOpenDevTools = useCallback(() => {
     window.devtool.window.openDevTools();
   }, []);
@@ -261,7 +331,7 @@ export default function PreviewTab() {
       const data = await window.devtool.capture.screenshot(
         rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : undefined
       );
-      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const ts = localFilenameTimestamp();
       setCaptureData({ data, mimeType: "image/png", filename: `screenshot-${ts}.png` });
     } finally {
       setIsCapturing(false);
@@ -306,7 +376,7 @@ export default function PreviewTab() {
         cleanupCanvas?.();
         recordStream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const ts = localFilenameTimestamp();
         const reader = new FileReader();
         reader.onloadend = () => { const base64 = reader.result as string; setCaptureData({ data: base64, mimeType: "video/webm", filename: `recording-${ts}.webm` }); };
         reader.readAsDataURL(blob);
@@ -432,6 +502,10 @@ export default function PreviewTab() {
           <OpenExternalIcon />
           <span className={styles.toolBtnLabel}>{t("preview.openExternal")}</span>
         </button>
+        <button className={styles.toolBtn} onClick={handleShowQr} disabled={!serverUrl} title={t("preview.lanQr")}>
+          <QrIcon />
+          <span className={styles.toolBtnLabel}>{t("preview.lanQr")}</span>
+        </button>
         <button className={styles.toolBtn} onClick={handleScreenshot} title={t("preview.screenshot")}>
           <ScreenshotIcon />
           <span className={styles.toolBtnLabel}>{t("preview.screenshot")}</span>
@@ -448,13 +522,6 @@ export default function PreviewTab() {
           </button>
         )}
       </div>
-
-      {/* Deployment warnings */}
-      {pkg?.warnings && pkg.warnings.length > 0 && (
-        <div className={styles.warnings}>
-          {pkg.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
-        </div>
-      )}
 
       {/* ── Preview area with left strip ── */}
       <div className={styles.previewOuter}>
@@ -511,7 +578,7 @@ export default function PreviewTab() {
                     opacity: zoom < 0.45 ? 0 : 1,
                   }}
                 >
-                  <span className={styles.statusTime}>9:41</span>
+                  <span className={styles.statusTime}>{statusTime}</span>
                   <div className={styles.statusIcons}>
                     <SignalIcon />
                     <WifiIcon />
@@ -645,6 +712,25 @@ export default function PreviewTab() {
           onClose={() => setCaptureData(null)}
         />
       )}
+      {showQr && (
+        <div className={styles.qrOverlay} onClick={() => setShowQr(false)}>
+          <div className={styles.qrModal} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.qrModalHeader}>
+              <span className={styles.qrModalTitle}>{t("preview.lanQrTitle")}</span>
+              <button className={styles.qrCloseBtn} onClick={() => setShowQr(false)}>✕</button>
+            </div>
+            {lanUrl && qrDataUrl ? (
+              <>
+                <img src={qrDataUrl} alt="QR Code" className={styles.qrImage} />
+                <div className={styles.qrUrl}>{lanUrl}</div>
+                <div className={styles.qrTip}>{t("preview.lanQrScanTip")}</div>
+              </>
+            ) : (
+              <div className={styles.qrNoIp}>{t("preview.lanQrNoIp")}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -691,4 +777,20 @@ function PlusIcon() {
 }
 function MinusIcon() {
   return <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>;
+}
+function QrIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <rect x="1" y="1" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2.5" y="2.5" width="1" height="1" fill="currentColor" />
+      <rect x="7" y="1" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="8.5" y="2.5" width="1" height="1" fill="currentColor" />
+      <rect x="1" y="7" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2.5" y="8.5" width="1" height="1" fill="currentColor" />
+      <rect x="7" y="7" width="1.5" height="1.5" fill="currentColor" />
+      <rect x="9.5" y="7" width="1.5" height="1.5" fill="currentColor" />
+      <rect x="7" y="9.5" width="1.5" height="1.5" fill="currentColor" />
+      <rect x="9.5" y="9.5" width="1.5" height="1.5" fill="currentColor" />
+    </svg>
+  );
 }

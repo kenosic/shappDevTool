@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, desktopCapturer } from "electron";
 import { writeFile, mkdir } from "fs/promises";
-import { join, basename } from "path";
+import { join, basename, relative } from "path";
+import sharp from "sharp";
 
 export function registerCaptureHandlers(win: BrowserWindow): void {
   // Capture screenshot — rect is in CSS pixels (Electron "points"); crops to simulator area when provided
@@ -33,25 +34,33 @@ export function registerCaptureHandlers(win: BrowserWindow): void {
         data: string;
         mimeType: "image/png" | "video/webm";
         filename: string;
-        role: "cover" | "carousel" | "none";
+        role: "cover" | "carousel" | "logo" | "none";
         appDir: string;
       }
     ): Promise<string> => {
       const { data, mimeType, filename, role, appDir } = params;
 
+      // ── 内置角色（cover / carousel / logo）统一转为 WebP 无损 ──────
+      const isBuiltinRole = role === "cover" || role === "carousel" || role === "logo";
+
       let savePath: string;
-      if (role === "cover" || role === "carousel") {
-        const destDir = join(appDir, "assets", role === "cover" ? "." : "carousel");
+      let relPath: string | undefined;
+
+      if (isBuiltinRole) {
+        const destDir = join(appDir, "assets", role === "carousel" ? "carousel" : ".");
         await mkdir(destDir, { recursive: true });
         if (role === "cover") {
-          // Always use a stable name so the sidebar can reliably find it
-          const ext = filename.split(".").pop()?.toLowerCase() || "png";
-          savePath = join(destDir, `cover.${ext}`);
+          savePath = join(destDir, "cover.webp");
+        } else if (role === "logo") {
+          savePath = join(destDir, "logo.webp");
         } else {
-          savePath = join(destDir, filename);
+          // carousel: 替换原扩展名为 .webp
+          const webpName = filename.replace(/\.[^.]+$/, ".webp");
+          savePath = join(destDir, webpName);
         }
+        relPath = relative(appDir, savePath);
       } else {
-        // Custom location — ask user
+        // ── 自定义位置 — 保持原始 PNG 格式 ──────────────────────────
         const ext = mimeType === "image/png" ? "png" : "webm";
         const result = await dialog.showSaveDialog({
           title: "保存媒体文件",
@@ -69,12 +78,24 @@ export function registerCaptureHandlers(win: BrowserWindow): void {
 
       // Decode base64 data
       const base64 = data.replace(/^data:[^;]+;base64,/, "");
-      const buffer = Buffer.from(base64, "base64");
-      await writeFile(savePath, buffer);
+      const inputBuffer = Buffer.from(base64, "base64");
+      // 内置角色转为 WebP 无损，自定义位置保持原格式
+      let outputBuffer: Buffer;
+      if (isBuiltinRole) {
+        const pipeline = sharp(inputBuffer);
+        // Logo 裁剪并缩放到 128×128
+        if (role === "logo") {
+          pipeline.resize(128, 128, { fit: "cover", position: "center" });
+        }
+        outputBuffer = await pipeline.webp({ lossless: true }).toBuffer();
+      } else {
+        outputBuffer = inputBuffer;
+      }
+      await writeFile(savePath, outputBuffer);
 
-      // Notify renderer so sidebar can refresh cover/carousel
-      if (role === "cover" || role === "carousel") {
-        win.webContents.send("package:assetsChanged", { role, appDir, filename });
+      // 通知渲染进程刷新侧边栏
+      if (isBuiltinRole) {
+        win.webContents.send("package:assetsChanged", { role, appDir, filename, relPath });
       }
 
       return savePath;

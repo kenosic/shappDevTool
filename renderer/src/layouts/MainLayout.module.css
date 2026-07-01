@@ -8,18 +8,61 @@
 .body {
   display: flex;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
 .content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-app);
 }
 
-.tabContent {
+.previewArea {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.tabContent {
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.tabContentCollapsed {
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Drag handles ──────────────────────────────────────────────── */
+
+.leftResizeHandle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  z-index: 2;
+}
+.leftResizeHandle:hover {
+  background: var(--accent-color, #007acc);
+}
+
+.bottomResizeHandle {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  z-index: 2;
+}
+.bottomResizeHandle:hover {
+  background: var(--accent-color, #007acc);
 }

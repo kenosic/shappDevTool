@@ -1,18 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022"],
     "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "paths": {
-      "@/*": ["./electron/*"]
-    }
+    "lib": ["ES2022", "deno.ns"]
   },
-  "include": ["electron/**/*"],
-  "exclude": ["node_modules", "dist", "renderer"]
+  "include": ["tests/**/*", "resources/**/*", "server/**/*", "lib/**/*", "watcher/**/*"],
+  "exclude": ["node_modules", "dist", "dist-dev", "dist-installer", "renderer", "electron"]
 }

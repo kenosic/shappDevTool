@@ -13,4 +13,8 @@ export function registerServerHandlers(): void {
   ipcMain.handle("server:getUrl", () => {
     return staticServer.getUrl();
   });
+
+  ipcMain.handle("server:getLanUrl", () => {
+    return staticServer.getLanUrl();
+  });
 }

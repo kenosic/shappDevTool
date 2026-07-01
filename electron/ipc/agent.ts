@@ -1,11 +1,28 @@
 import { ipcMain, safeStorage, BrowserWindow, dialog, app } from "electron";
 import { createServer } from "net";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } from "fs";
 import { pathToFileURL } from "url";
 import * as path from "path";
 import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk";
 import type { Session, Message, Part } from "@opencode-ai/sdk";
 import { getStore } from "../main";
+
+// ── Diagnostics logger (writes to userData/logs/agent.log) ───────
+
+let _logPath: string | null = null;
+function agentLog(msg: string): void {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  if (!_logPath) {
+    try {
+      const dir = path.join(app.getPath("userData"), "logs");
+      mkdirSync(dir, { recursive: true });
+      _logPath = path.join(dir, "agent.log");
+    } catch { return; }
+  }
+  try { appendFileSync(_logPath, line + "\n", "utf-8"); } catch { /* ignore */ }
+}
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -18,7 +35,7 @@ export type AgentSession = {
 export type AgentMessagePart =
   | { type: "text"; text: string }
   | { type: "tool"; callID: string; toolName: string; args: Record<string, unknown>; result?: string; status: "pending" | "running" | "completed" | "error" }
-  | { type: "file"; mimeType: string; url: string };
+  | { type: "file"; mimeType: string; url: string; filename?: string };
 
 export type AgentMessage = {
   id: string;
@@ -33,6 +50,62 @@ export type AgentProvider = {
   models: { id: string; name: string }[];
 };
 
+// Model metadata types (aligns with opencode SDK)
+export type ModelCapabilities = {
+  temperature: boolean;
+  reasoning: boolean;
+  attachment: boolean;
+  toolcall: boolean;
+  input: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
+  output: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
+};
+
+export type ModelCost = {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+};
+
+export type ModelLimit = {
+  context: number;
+  input?: number;
+  output: number;
+};
+
+export type ModelVariant = {
+  id: string;
+  name: string;
+  disabled?: boolean;
+};
+
+export type CatalogModel = {
+  id: string;
+  name: string;
+  family?: string;
+  status?: "alpha" | "beta" | "deprecated" | "active";
+  capabilities?: ModelCapabilities;
+  cost?: ModelCost;
+  limit?: ModelLimit;
+  releaseDate?: string;
+  variants?: ModelVariant[];
+};
+
+export type AuthPrompt = {
+  type: "text" | "select";
+  key: string;
+  message: string;
+  placeholder?: string;
+  options?: { label: string; value: string; hint?: string }[];
+  when?: { key: string; op: string; value: string };
+};
+
+export type AuthMethod = {
+  type: "oauth" | "api";
+  label: string;
+  prompts?: AuthPrompt[];
+};
+
 // Full catalog entry from models.dev (popular providers, including not-yet-configured)
 export type AgentCatalogProvider = {
   id: string;
@@ -41,8 +114,8 @@ export type AgentCatalogProvider = {
   api?: string;                // API base URL
   npm?: string;                // SDK package name
   connected: boolean;          // whether auth is already configured
-  authMethods: { type: "oauth" | "api"; label: string }[];
-  models: { id: string; name: string }[];
+  authMethods: AuthMethod[];
+  models: CatalogModel[];
 };
 
 export type AgentEvent =
@@ -88,6 +161,58 @@ function getSkillsConfigDir(): string {
     : path.join(__dirname, "../../.github");
 }
 
+/** Ensure a correctly-named opencode binary is available in a writable location
+ *  and return its directory so it can be injected into PATH.
+ *
+ *  The bundled binary uses a platform-suffixed name (e.g. opencode-win32-x64.exe)
+ *  but @opencode-ai/sdk internally runs `launch("opencode", ...)` — on Windows
+ *  cross-spawn resolves the bare name via PATHEXT, so the file must be named
+ *  opencode.exe / opencode.cmd.  We create a thin wrapper script (not a 140 MB
+ *  copy of the binary) in a writable location.
+ *
+ *  Two lookup strategies:
+ *   - Packaged app  : process.resourcesPath + opencode/
+ *   - Dev / source  : __dirname + ../../resources/opencode/
+ */
+function ensureOpencodeWrapperDir(): string | null {
+  const bundledDir = app.isPackaged
+    ? path.join(process.resourcesPath, "opencode")
+    : path.join(__dirname, "../../resources/opencode");
+
+  agentLog(`ensureOpencodeWrapperDir: packaged=${app.isPackaged}, bundledDir=${bundledDir}, exists=${existsSync(bundledDir)}`);
+  if (!existsSync(bundledDir)) return null;
+
+  const wrapperDir = app.isPackaged
+    ? path.join(app.getPath("userData"), "opencode-wrapper")
+    : path.join(__dirname, "../../../node_modules/.cache/opencode-wrapper");
+  mkdirSync(wrapperDir, { recursive: true });
+
+  if (process.platform === "win32") {
+    const src = path.join(bundledDir, "opencode-win32-x64.exe");
+    const dst = path.join(wrapperDir, "opencode.cmd");
+    agentLog(`ensureOpencodeWrapperDir: win32 src=${src}, srcExists=${existsSync(src)}, dst=${dst}, dstExists=${existsSync(dst)}`);
+    if (existsSync(src) && !existsSync(dst)) {
+      writeFileSync(dst, `@"${src}" %*\r\n`, "utf-8");
+      agentLog(`ensureOpencodeWrapperDir: created wrapper cmd`);
+    }
+  } else {
+    // macOS / Linux — the bundled binary has no extension
+    const candidates = ["opencode-darwin-arm64", "opencode-darwin-x64", "opencode-linux-x64"];
+    for (const name of candidates) {
+      const src = path.join(bundledDir, name);
+      if (existsSync(src)) {
+        const dst = path.join(wrapperDir, "opencode");
+        if (!existsSync(dst)) {
+          writeFileSync(dst, `#!/bin/sh\nexec "${src}" "$@"\n`, { mode: 0o755 });
+        }
+        break;
+      }
+    }
+  }
+
+  return wrapperDir;
+}
+
 /** Spawn the OpenCode server with `cwd` set to the project directory so that
  *  all tool calls (read, glob, etc.) operate relative to the opened project.
  *
@@ -98,26 +223,61 @@ function getSkillsConfigDir(): string {
  *  inside the SDK is synchronous, so we can restore the cwd immediately after
  *  the call returns (before the first async yield).
  *
- *  The same synchronous window is used to set OPENCODE_CONFIG_DIR so that the
- *  spawned opencode child process inherits the env var and discovers the
- *  mars-app-generator skill (and others) from the monorepo .github directory.
+ *  The same synchronous window is used to set OPENCODE_CONFIG_DIR and inject
+ *  the opencode wrapper directory into PATH so that the spawned opencode child
+ *  process can discover both the bundled skills and the bundled binary.
  */
 async function spawnOpenCodeServer(port: number, cwd: string): Promise<AgentInstance> {
+  agentLog(`spawnOpenCodeServer: port=${port}, cwd=${cwd}`);
   const skillsConfigDir = getSkillsConfigDir();
   const savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
   if (existsSync(skillsConfigDir)) {
     process.env.OPENCODE_CONFIG_DIR = skillsConfigDir;
+    agentLog(`spawnOpenCodeServer: OPENCODE_CONFIG_DIR=${skillsConfigDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: skillsConfigDir NOT found: ${skillsConfigDir}`);
+  }
+
+  // Ensure the bundled opencode binary is discoverable via PATH — in both
+  // dev and packaged builds the binary uses a platform-suffixed name that the
+  // SDK's bare `launch("opencode")` call cannot resolve directly.
+  const savedPath = process.env.PATH;
+  const wrapperDir = ensureOpencodeWrapperDir();
+  if (wrapperDir) {
+    process.env.PATH = `${wrapperDir}${path.delimiter}${savedPath ?? ""}`;
+    agentLog(`spawnOpenCodeServer: PATH prepended with ${wrapperDir}`);
+  } else {
+    agentLog(`spawnOpenCodeServer: NO wrapper dir — relying on system PATH`);
   }
 
   const savedCwd = process.cwd();
   process.chdir(cwd);
   // createOpencode() is async, but its internal `launch("opencode", ...)` call
   // is *synchronous* — the child process is spawned before the first await.
-  // We must call it and restore cwd in the same synchronous turn.
-  // OPENCODE_CONFIG_DIR is also restored here: the child already captured the
-  // env snapshot at spawn time, so restoring early is safe.
-  const raw = createOpencode({ hostname: "127.0.0.1", port, timeout: 15000 });
+  // We must call it and restore cwd / env in the same synchronous turn.
+  // The child already captured the env snapshot at spawn time, so restoring
+  // early is safe.
+  const raw = createOpencode({
+    hostname: "127.0.0.1",
+    port,
+    timeout: 15000,
+    config: {
+      agent: {
+        build: { permission: { external_directory: "deny" } },
+        plan: { permission: { external_directory: "deny" } },
+        general: { permission: { external_directory: "deny" } },
+      },
+    },
+  });
   process.chdir(savedCwd);
+
+  // Restore PATH
+  if (savedPath !== undefined) {
+    process.env.PATH = savedPath;
+  } else {
+    delete process.env.PATH;
+  }
+
   if (savedConfigDir !== undefined) {
     process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   } else {
@@ -125,6 +285,7 @@ async function spawnOpenCodeServer(port: number, cwd: string): Promise<AgentInst
   }
 
   const resolved = await raw;
+  agentLog(`spawnOpenCodeServer: server ready at ${resolved.server.url}`);
   // Build a directory-aware client so GET /session automatically filters by
   // this project and the x-opencode-directory header is sent on all requests.
   const client = createOpencodeClient({ baseUrl: resolved.server.url, directory: cwd });
@@ -145,13 +306,71 @@ function findFreePort(): Promise<number> {
 
 // ── Store helpers ─────────────────────────────────────────────────
 
-/** OpenCode creates sessions with a default title like "New session - 2026-05-27T04:33:24.027Z".
- *  Normalise that back to a plain "New Session" so the renderer can detect when a real title hasn't been set.
+/** Keep real opencode-generated titles; convert the default timestamp format to empty string
+ *  so the renderer can show the content-based auto-title from the first user message.
  */
 function normalizeTitle(title: string | undefined | null): string {
-  if (!title) return "New Session";
-  if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(title)) return "New Session";
+  if (!title) return "";
+  if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(title)) return "";
   return title;
+}
+
+// ── Context injection ────────────────────────────────────────────
+
+/**
+ * Build and send the system context message for a new session.
+ * Uses promptAsync with noReply=true so the agent receives the instructions
+ * but does not generate a response.  The message is filtered from the
+ * renderer display by getMessages (checks for "当前项目目录:" prefix).
+ */
+async function injectSessionContext(
+  client: ReturnType<typeof createOpencodeClient>,
+  sessionId: string,
+  projectDir?: string,
+) {
+  const dir = projectDir ?? _currentProjectDir ?? process.cwd();
+
+  const contextLines = [
+    `当前项目目录: ${dir}`,
+    "",
+    "## 重要说明（请严格遵守）",
+    "",
+    "### 1. 主动使用 Skill",
+    `你当前可以访问以下 Skill（位于 OPENCODE_CONFIG_DIR/skills/ 目录下）：`,
+    "- `mars-app-generator` — 生成 MARS 应用类微应用（WebView 前端 + TypeScript 后端）",
+    "- `mars-cocos-game-generator` — 生成 Cocos Creator 游戏类微应用",
+    "- `mars-unity-game-generator` — 生成 Unity 游戏类微应用",
+    "",
+    "当用户请求创建 MARS 应用或游戏时，**必须主动读取并使用对应的 Skill 文件**。",
+    "Skill 文件中包含了完整的协议规范、SDK API 用法、权限模型和打包约定。",
+    "**不要凭记忆生成 MARS 应用代码**，始终以 Skill 文件中的规范为准。",
+    "",
+    "### 2. 文件直接放在当前项目目录",
+    `**所有生成的应用文件必须直接放在当前项目目录中：\`${dir}\`**`,
+    "- ❌ 不要创建新的子目录（如 `my-app/`, `todo-app/` 等）",
+    "- ✅ 直接在当前目录下创建 `manifest.json`、`permissions.json`、`frontend/index.html`、`backend/main.ts` 等文件",
+    "- 如果当前目录已有文件，先了解现有结构再决定如何修改",
+    "- 善用 `list_dir`、`read_file` 等工具了解当前目录结构",
+    "",
+    "### 3. 其他注意事项",
+    "- 使用 `manage_todo_list` 规划复杂任务",
+    "- 后端代码必须使用 `@mars/sdk` 而非 `@mars/sdk/common`",
+    "- 数据库操作前必须先 `CREATE TABLE IF NOT EXISTS`",
+    "- 每个 ZIP 包文件数上限 2000，避免生成大量独立数据文件",
+  ];
+
+  const contextText = contextLines.join("\n");
+  agentLog(`injectSessionContext: sending context to ${sessionId}, len=${contextText.length}`);
+
+  await client.session.promptAsync({
+    path: { id: sessionId },
+    body: {
+      noReply: true,
+      parts: [{ type: "text", text: contextText }],
+    },
+  });
+
+  agentLog(`injectSessionContext: done for ${sessionId}`);
 }
 
 const AGENT_STORE_KEY = "agentPanel" as const;
@@ -168,8 +387,8 @@ type AgentStoreData = {
 const AGENT_DEFAULTS: AgentStoreData = {
   width: 360,
   visible: true,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   mode: "build",
   encryptedKeys: {},
 };
@@ -271,19 +490,26 @@ function startControlPolling(win: BrowserWindow) {
 // ── SSE Event subscription ─────────────────────────────────────────
 
 async function startEventSubscription(win: BrowserWindow) {
+  agentLog(`startEventSubscription: starting, serverUrl=${_instance?.server.url}`);
   if (_eventAbort) {
     _eventAbort.abort();
+    agentLog(`startEventSubscription: aborted previous subscription`);
   }
   _eventAbort = new AbortController();
   const client = getClient();
 
   try {
     const response = await client.event.subscribe();
+    agentLog(`startEventSubscription: SSE connected, entering event loop`);
+    let eventCount = 0;
     for await (const event of response.stream) {
       if (_eventAbort?.signal.aborted) break;
+      eventCount++;
       const e = event as any;
-      // DEBUG: log every SSE event so we can inspect the exact shape
-      console.log("[Agent][SSE]", JSON.stringify({ type: e?.type, properties: e?.properties }));
+      // Log every 50th event + key types to avoid flooding
+      if (eventCount % 50 === 0 || e?.type === "session.error" || e?.type === "session.idle") {
+        agentLog(`SSE event #${eventCount}: type=${e?.type}, props=${JSON.stringify(e?.properties).slice(0, 200)}`);
+      }
 
       // Auto-approve any permission requests so tools are never blocked
       if (e?.type === "permission.asked") {
@@ -323,7 +549,7 @@ async function startEventSubscription(win: BrowserWindow) {
     }
   } catch (err) {
     if (!_eventAbort?.signal.aborted) {
-      console.error("[Agent] Event subscription error:", err);
+      agentLog(`startEventSubscription: SSE error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
@@ -351,19 +577,20 @@ export function registerAgentHandlers(win: BrowserWindow) {
 
   // Start (or confirm already-running) OpenCode server
   ipcMain.handle("agent:startServer", async () => {
+    agentLog(`agent:startServer called, existing instance=${!!_instance}, startPromise=${!!_startPromise}`);
     if (_instance) return { ok: true };
-    // Concurrent calls share the same promise — no "already starting" error
     if (!_startPromise) {
       _startPromise = (async () => {
         try {
           const port = await findFreePort();
           const cwd = _currentProjectDir ?? process.cwd();
+          agentLog(`agent:startServer: spawning on port ${port}, cwd=${cwd}`);
           _instance = await spawnOpenCodeServer(port, cwd);
-          console.log("[Agent] OpenCode server started at", _instance.server.url, "cwd:", cwd);
+          agentLog(`agent:startServer: server ready at ${_instance.server.url}, cwd=${cwd}`);
           return { ok: true } as const;
         } catch (err: unknown) {
           const error = err instanceof Error ? err.message : String(err);
-          console.error("[Agent] Failed to start OpenCode server:", error);
+          agentLog(`agent:startServer: FAILED — ${error}`);
           return { ok: false, error } as const;
         } finally {
           _startPromise = null;
@@ -397,7 +624,7 @@ export function registerAgentHandlers(win: BrowserWindow) {
       _instance = await spawnOpenCodeServer(port, dir);
       console.log("[Agent] OpenCode restarted for project:", dir, "at", _instance.server.url);
       if (_mainWindow && !_mainWindow.isDestroyed()) {
-        await startEventSubscription(_mainWindow);
+        startEventSubscription(_mainWindow);
         startControlPolling(_mainWindow);
       }
     } catch (err: unknown) {
@@ -424,6 +651,16 @@ export function registerAgentHandlers(win: BrowserWindow) {
     const result = await client.session.create(opts);
     if ((result as any).error) throw new Error(String((result as any).error));
     const s = result.data as Session;
+
+    // ── Inject context / system prompt ──────────────────────────
+    // Send a noReply message that primes the agent with:
+    //   1. The project directory (so the agent knows where it is)
+    //   2. Instructions to actively use available skills
+    //   3. Instructions to create files directly in the project root, not a subdirectory
+    injectSessionContext(client, s.id, directory).catch((err) => {
+      agentLog(`injectSessionContext failed for ${s.id}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     return { id: s.id, title: normalizeTitle(s.title), createdAt: s.time?.created ?? Date.now() } satisfies AgentSession;
   });
 
@@ -475,6 +712,14 @@ export function registerAgentHandlers(win: BrowserWindow) {
               status: state?.status ?? "pending",
             }];
           }
+          if (p.type === "file") {
+            return [{
+              type: "file",
+              mimeType: (p as any).mimeType ?? (p as any).mime ?? "",
+              url: (p as any).url ?? "",
+              filename: (p as any).filename ?? (p as any).name ?? "",
+            }];
+          }
           // Skip non-renderable part types (step-start, step-finish, snapshot, etc.)
           return [];
         }),
@@ -518,6 +763,7 @@ export function registerAgentHandlers(win: BrowserWindow) {
     if (typeof text !== "string" || text.trim() === "") throw new Error("Empty message");
     const client = getClient();
     const agentData = getAgentStore();
+    agentLog(`sendPrompt: sessionId=${sessionId}, provider=${agentData.selectedProvider}, model=${agentData.selectedModel}, mode=${mode}, textLen=${text.length}, serverUrl=${_instance?.server.url}`);
 
     const fileParts = (files ?? []).map((f) => ({
       type: "file" as const,
@@ -526,7 +772,7 @@ export function registerAgentHandlers(win: BrowserWindow) {
       filename: f.name,
     }));
 
-    // Send prompt — promptAsync returns 204 immediately; streaming arrives via SSE events
+    // Send prompt — promptAsync returns 204 immediately; streaming arrives via SSE events.
     client.session.promptAsync({
       path: { id: sessionId },
       body: {
@@ -537,7 +783,18 @@ export function registerAgentHandlers(win: BrowserWindow) {
         ...(mode ? { agent: mode } : {}),
         parts: [...fileParts, { type: "text", text }],
       },
+    }).then((result: any) => {
+      agentLog(`sendPrompt: response received, ok=${!result?.error}, error=${JSON.stringify(result?.error)}`);
+      if (result?.error) {
+        if (!win.isDestroyed()) {
+          win.webContents.send("agent:event", {
+            type: "session.error",
+            properties: { sessionID: sessionId, error: { name: "PromptError", data: { message: typeof result.error === "string" ? result.error : JSON.stringify(result.error) } } },
+          });
+        }
+      }
     }).catch((err: Error) => {
+      agentLog(`sendPrompt: network/throw error: ${err.message}`);
       if (!win.isDestroyed()) {
         win.webContents.send("agent:event", {
           type: "session.error",
@@ -563,8 +820,10 @@ export function registerAgentHandlers(win: BrowserWindow) {
     const client = getClient();
     try {
       const result = await client.config.providers();
-      if (result.error) return [];
+      agentLog(`listProviders: result.error=${!!result.error}, data keys=${result.data ? Object.keys(result.data as object).join(",") : "null"}`);
+      if (result.error) { agentLog(`listProviders: error detail=${JSON.stringify(result.error)}`); return []; }
       const providers = (result.data as any)?.providers ?? [];
+      agentLog(`listProviders: got ${providers.length} providers`);
       return providers.map((p: any): AgentProvider => ({
         id: p.id ?? p.name,
         name: p.name ?? p.id,
@@ -574,7 +833,8 @@ export function registerAgentHandlers(win: BrowserWindow) {
           name: m.name ?? m.id,
         })),
       }));
-    } catch {
+    } catch (err: any) {
+      agentLog(`listProviders: exception: ${err?.message ?? err}`);
       return [];
     }
   });
@@ -590,6 +850,7 @@ export function registerAgentHandlers(win: BrowserWindow) {
 
       const cfg = (cfgResult as any).data as any;
       const provData = (provResult as any).data as any;
+      agentLog(`getConfig: cfg keys=${cfg ? Object.keys(cfg).join(",") : "null"}, provData keys=${provData ? Object.keys(provData).join(",") : "null"}`);
       const rawProviders: any[] = provData?.providers ?? [];
       const defaults: Record<string, string> = provData?.default ?? {};
 
@@ -602,6 +863,7 @@ export function registerAgentHandlers(win: BrowserWindow) {
       const defaultEntries = Object.entries(defaults);
       const defaultProviderId = cfgProvider || (defaultEntries[0]?.[0] ?? "");
       const defaultModelId   = cfgModelId  || (defaultEntries[0]?.[1] ?? "");
+      agentLog(`getConfig: cfgModel=${cfgModel}, defaultProviderId=${defaultProviderId}, defaultModelId=${defaultModelId}, defaultEntries=${JSON.stringify(defaultEntries)}`);
 
       // Collect free models (models with "free" in name or tagged free)
       const freeModels: { id: string; name: string; providerId: string }[] = [];
@@ -635,12 +897,38 @@ export function registerAgentHandlers(win: BrowserWindow) {
       }
 
       return { freeModels, providerGroups, defaultProviderId, defaultModelId };
-    } catch {
+    } catch (err: any) {
+      agentLog(`getConfig: exception: ${err?.message ?? err}`);
       return { freeModels: [], providerGroups: [], defaultProviderId: "", defaultModelId: "" };
     }
   });
 
-  // Set API key (encrypted)
+  // Set provider configuration (API key, base URL, and other options)
+  ipcMain.handle("agent:setProviderConfig", async (_e, providerId: string, config: { type: "api" | "oauth"; key?: string; options?: Record<string, string> }) => {
+    if (!providerId || typeof providerId !== "string") throw new Error("Invalid provider id");
+    const client = getClient();
+
+    const body: any = { type: config.type };
+    if (config.key) body.key = config.key;
+    if (config.options && Object.keys(config.options).length > 0) {
+      body.options = config.options;
+    }
+
+    await client.auth.set({
+      path: { id: providerId },
+      body,
+    });
+
+    // Persist encrypted key if available
+    if (config.key && safeStorage.isEncryptionAvailable()) {
+      const agentData = getAgentStore();
+      const encryptedKeys = { ...agentData.encryptedKeys };
+      encryptedKeys[providerId] = safeStorage.encryptString(config.key).toString("base64");
+      setAgentStore({ encryptedKeys });
+    }
+  });
+
+  // Legacy: set API key only (backward compat)
   ipcMain.handle("agent:setApiKey", async (_e, providerId: string, key: string) => {
     if (!providerId || typeof providerId !== "string") throw new Error("Invalid provider id");
     if (typeof key !== "string") throw new Error("Invalid key");
@@ -673,7 +961,23 @@ export function registerAgentHandlers(win: BrowserWindow) {
 
       const all: any[] = listData.all ?? [];
       const connected: string[] = listData.connected ?? [];
-      const authMap: Record<string, { type: "oauth" | "api"; label: string }[]> = authData ?? {};
+      const authMap: Record<string, AuthMethod[]> = {};
+      if (authData) {
+        for (const [key, methods] of Object.entries(authData)) {
+          authMap[key] = (methods as any[]).map((m: any) => ({
+            type: m.type,
+            label: m.label,
+            prompts: Array.isArray(m.prompts) ? m.prompts.map((p: any) => ({
+              type: p.type,
+              key: p.key,
+              message: p.message,
+              placeholder: p.placeholder,
+              options: p.options,
+              when: p.when,
+            })) : undefined,
+          }));
+        }
+      }
 
       return all.map((p: any): AgentCatalogProvider => ({
         id: p.id ?? p.name,
@@ -683,10 +987,47 @@ export function registerAgentHandlers(win: BrowserWindow) {
         npm: p.npm,
         connected: connected.includes(p.id),
         authMethods: authMap[p.id] ?? [],
-        // models is a dict { [modelId]: Model }
+        // models is a dict { [modelId]: Model } — include full metadata
         models: Object.values(p.models ?? {}).map((m: any) => ({
           id: m.id,
           name: m.name ?? m.id,
+          family: m.family,
+          status: m.status ?? "active",
+          capabilities: m.capabilities ? {
+            temperature: m.capabilities.temperature ?? false,
+            reasoning: m.capabilities.reasoning ?? false,
+            attachment: m.capabilities.attachment ?? false,
+            toolcall: m.capabilities.toolcall ?? false,
+            input: {
+              text: m.capabilities.input?.text ?? true,
+              audio: m.capabilities.input?.audio ?? false,
+              image: m.capabilities.input?.image ?? false,
+              video: m.capabilities.input?.video ?? false,
+              pdf: m.capabilities.input?.pdf ?? false,
+            },
+            output: {
+              text: m.capabilities.output?.text ?? true,
+              audio: m.capabilities.output?.audio ?? false,
+              image: m.capabilities.output?.image ?? false,
+              video: m.capabilities.output?.video ?? false,
+              pdf: m.capabilities.output?.pdf ?? false,
+            },
+          } : undefined,
+          cost: m.cost ? {
+            input: m.cost.input,
+            output: m.cost.output,
+            cacheRead: m.cost.cache?.read ?? m.cost.cache_read,
+            cacheWrite: m.cost.cache?.write ?? m.cost.cache_write,
+          } : undefined,
+          limit: m.limit ? {
+            context: m.limit.context,
+            input: m.limit.input,
+            output: m.limit.output,
+          } : undefined,
+          releaseDate: m.release_date,
+          variants: m.variants ? Object.entries(m.variants as Record<string, any>).map(
+            ([id, v]: [string, any]) => ({ id, name: v.name ?? id, disabled: v.disabled })
+          ) : undefined,
         })),
       }));
     } catch {
@@ -742,9 +1083,9 @@ export function registerAgentHandlers(win: BrowserWindow) {
     }
   });
 
-  // Subscribe to events (starts SSE loop + control polling)
-  ipcMain.handle("agent:subscribe", async () => {
-    await startEventSubscription(win);
+  // Subscribe to events (starts SSE loop + control polling in parallel)
+  ipcMain.handle("agent:subscribe", () => {
+    startEventSubscription(win);
     startControlPolling(win);
   });
 
@@ -752,6 +1093,19 @@ export function registerAgentHandlers(win: BrowserWindow) {
   ipcMain.handle("agent:unsubscribe", () => {
     _eventAbort?.abort();
     _eventAbort = null;
+  });
+
+  // Diagnostics: return the agent log file path + last 200 lines
+  ipcMain.handle("agent:getLog", () => {
+    if (!_logPath || !existsSync(_logPath)) return { path: null, tail: "" };
+    try {
+      const content = readFileSync(_logPath, "utf-8");
+      const lines = content.split("\n");
+      const tail = lines.slice(-200).join("\n");
+      return { path: _logPath, tail };
+    } catch {
+      return { path: _logPath, tail: "" };
+    }
   });
 }
 

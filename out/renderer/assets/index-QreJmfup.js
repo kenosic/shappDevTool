@@ -7058,6 +7058,155 @@ const createImpl = (createState2) => {
   return useBoundStore;
 };
 const create$1 = ((createState2) => createState2 ? createImpl(createState2) : createImpl);
+function buildGraphNodes(commits, branchRefs, tasks) {
+  const checkpointMap = /* @__PURE__ */ new Map();
+  for (const task of tasks) {
+    for (const cp of task.checkpoints) {
+      checkpointMap.set(cp.commit_oid, {
+        taskId: task.id,
+        taskTitle: task.title,
+        fileCount: cp.file_count
+      });
+    }
+  }
+  const commitBranchMap = /* @__PURE__ */ new Map();
+  const tipOids = new Set(branchRefs.map((b) => b.tipOid));
+  for (const br of branchRefs) {
+    const visited = /* @__PURE__ */ new Set();
+    const queue = [br.tipOid];
+    while (queue.length > 0) {
+      const oid = queue.shift();
+      if (visited.has(oid)) continue;
+      visited.add(oid);
+      if (!commitBranchMap.has(oid)) commitBranchMap.set(oid, /* @__PURE__ */ new Set());
+      commitBranchMap.get(oid).add(br.name);
+      const commit = commits.find((c2) => c2.oid === oid);
+      if (commit) {
+        for (const p of commit.parentOids) queue.push(p);
+      }
+    }
+  }
+  return commits.map((c2) => ({
+    ...c2,
+    branches: [...commitBranchMap.get(c2.oid) ?? /* @__PURE__ */ new Set()].map((name2) => ({
+      name: name2,
+      isTip: tipOids.has(c2.oid)
+    })),
+    checkpoint: checkpointMap.get(c2.oid)
+  }));
+}
+const useGitStore = create$1((set, get) => ({
+  repoExists: false,
+  loading: false,
+  error: null,
+  commits: [],
+  branchRefs: [],
+  branches: [],
+  currentBranch: "main",
+  statusEntries: [],
+  tasks: [],
+  graphNodes: [],
+  selectedOid: null,
+  // ── refresh ─────────────────────────────────────────────────
+  refresh: async (projectDir) => {
+    set({ loading: true, error: null });
+    try {
+      const [graphData, branches, currentBranch, statusEntries] = await Promise.all([
+        window.devtool.git.graph(projectDir),
+        window.devtool.git.listBranches(projectDir),
+        window.devtool.git.currentBranch(projectDir),
+        window.devtool.git.status(projectDir)
+      ]);
+      const tasks = get().tasks;
+      const graphNodes = buildGraphNodes(graphData.commits, graphData.branches, tasks);
+      set({
+        repoExists: true,
+        commits: graphData.commits,
+        branchRefs: graphData.branches,
+        branches,
+        currentBranch,
+        statusEntries,
+        graphNodes,
+        loading: false
+      });
+    } catch {
+      set({ repoExists: false, commits: [], branches: [], statusEntries: [], graphNodes: [], loading: false });
+    }
+  },
+  // ── fullRefresh ─────────────────────────────────────────────
+  /** Atomically reload git data AND checkpoint tasks in one set() call.
+   *  Avoids the stale-data race where loadTasks builds graphNodes with
+   *  old commits/branchRefs before refresh updates them. */
+  fullRefresh: async (projectDir) => {
+    set({ loading: true, error: null });
+    try {
+      const [graphData, branches, currentBranch, statusEntries, tasks] = await Promise.all([
+        window.devtool.git.graph(projectDir),
+        window.devtool.git.listBranches(projectDir),
+        window.devtool.git.currentBranch(projectDir),
+        window.devtool.git.status(projectDir),
+        window.devtool.checkpoint.listTasksWithCheckpoints(projectDir).catch(() => [])
+      ]);
+      const graphNodes = buildGraphNodes(graphData.commits, graphData.branches, tasks);
+      set({
+        repoExists: true,
+        commits: graphData.commits,
+        branchRefs: graphData.branches,
+        branches,
+        currentBranch,
+        statusEntries,
+        tasks,
+        graphNodes,
+        loading: false
+      });
+    } catch {
+      set({ repoExists: false, commits: [], branches: [], statusEntries: [], tasks: [], graphNodes: [], loading: false });
+    }
+  },
+  // ── switchBranch ────────────────────────────────────────────
+  switchBranch: async (projectDir, branchName) => {
+    set({ loading: true, error: null });
+    try {
+      await window.devtool.git.switchBranch(projectDir, branchName);
+      await get().refresh(projectDir);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      set({ loading: false });
+    }
+  },
+  // ── loadTasks ───────────────────────────────────────────────
+  loadTasks: async (projectDir) => {
+    try {
+      const tasks = await window.devtool.checkpoint.listTasksWithCheckpoints(projectDir);
+      const graphNodes = buildGraphNodes(get().commits, get().branchRefs, tasks);
+      set({ tasks, graphNodes });
+    } catch {
+      set({ tasks: [] });
+    }
+  },
+  // ── autoCommit ──────────────────────────────────────────────
+  autoCommit: async (projectDir, taskId, summary) => {
+    const result = await window.devtool.git.autoCommit(projectDir, taskId, summary);
+    if (result) {
+      await get().fullRefresh(projectDir);
+    }
+  },
+  // ── restoreNode ─────────────────────────────────────────────
+  restoreNode: async (projectDir, oid) => {
+    set({ loading: true, error: null, selectedOid: oid });
+    try {
+      await window.devtool.git.resetToCommit(projectDir, oid);
+      await get().refresh(projectDir);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      set({ loading: false });
+    }
+  },
+  // ── setters ─────────────────────────────────────────────────
+  clearError: () => set({ error: null })
+}));
 const zh = {
   // ── common ──
   "common.loading": "加载中…",
@@ -7065,6 +7214,7 @@ const zh = {
   "common.saving": "保存中…",
   "common.cancel": "取消",
   "common.close": "关闭",
+  "common.back": "返回",
   "common.retry": "重试",
   "common.run": "运行",
   "common.stop": "停止",
@@ -7093,6 +7243,7 @@ const zh = {
   "welcome.noRecent": "暂无记录",
   // ── tabs ──
   "tabs.preview": "预览",
+  "tabs.issues": "问题",
   "tabs.log": "日志",
   "tabs.db": "KV 存储",
   // ── window controls ──
@@ -7114,6 +7265,7 @@ const zh = {
   "agent.deleteChat": "删除对话",
   "agent.settings": "Agent 设置",
   "agent.serverFailed": "⚠️ OpenCode 启动失败",
+  "agent.queryFailed": "请求失败，请重试",
   // ── tool call card ──
   "tool.completed": "完成",
   "tool.error": "出错",
@@ -7234,6 +7386,9 @@ const zh = {
   "log.clearTitle": "清空日志",
   "log.clear": "🗑 清空",
   "log.empty": "暂无日志",
+  "log.copy": "📋 复制",
+  "log.copyTitle": "复制日志",
+  "log.copied": "✓ 已复制",
   // ── preview tab ──
   "preview.frontend": "前端",
   "preview.frontendTitle": "前端页面",
@@ -7241,7 +7396,11 @@ const zh = {
   "preview.adminTitle": "管理后台",
   "preview.waitingServer": "等待服务器…",
   "preview.copied": "已复制",
-  "preview.openExternal": "新窗口打开",
+  "preview.openExternal": "浏览器预览",
+  "preview.lanQr": "手机预览",
+  "preview.lanQrTitle": "局域网手机预览",
+  "preview.lanQrScanTip": "手机与电脑处于同一局域网，扫码即可在手机浏览器访问预览",
+  "preview.lanQrNoIp": "未检测到局域网地址，请检查网络连接",
   "preview.devtools": "开发者工具 (F12)",
   "preview.screenshot": "截图",
   "preview.record": "录屏",
@@ -7278,6 +7437,25 @@ const zh = {
   "model.enterEnv": "输入 {env}",
   "model.enterApiKey": "输入 API Key",
   "model.noModels": "该提供商暂无可用模型",
+  "model.searchPlaceholder": "搜索模型…",
+  "model.searchResults": "搜索结果",
+  "model.noResults": "未找到匹配的模型",
+  "model.connectedProviders": "已连接的提供商",
+  "model.current": "当前",
+  "model.recent": "最近使用",
+  "model.showMore": "显示其余 {count} 个提供商",
+  "model.configureProvider": "配置提供商",
+  "model.saveAndConnect": "保存并连接",
+  "model.connect": "连接",
+  "model.oauthDesc": "您将被重定向到浏览器以完成该提供商的认证。",
+  "model.providerId": "提供商 ID",
+  "model.envVar": "环境变量",
+  "model.selectOption": "请选择…",
+  "model.connectProvider": "连接 {name}",
+  "model.providerDesc": "输入你的 {provider} API 密钥以连接帐户，并在 OpenCode 中使用 {provider} 模型。",
+  "model.chooseMethod": "选择 {provider} 的登录方式。",
+  "model.apiKeyPlaceholder": "API 密钥",
+  "model.submit": "提交",
   // ── agent settings modal ──
   "agentSettings.modelConfig": "模型配置",
   "agentSettings.providerId": "提供商 (Provider ID)",
@@ -7361,7 +7539,71 @@ const zh = {
   "update.downloading": "正在下载 v{version}…",
   "update.downloaded": "已下载，重启后生效",
   "update.restartNow": "立即重启",
-  "update.restartLater": "稍后重启"
+  "update.restartLater": "稍后重启",
+  // ── git tab ──
+  "git.initRepo": "初始化仓库",
+  "git.initRepoTitle": "在当前项目目录初始化 Git 仓库",
+  "git.committing": "提交中…",
+  "git.committed": "已提交",
+  "git.commitMessage": "提交信息",
+  "git.commitPlaceholder": "描述本次变更…",
+  "git.commitBtn": "提交",
+  "git.noHistory": "暂无提交记录，运行 Agent 后将自动记录",
+  "git.noRepo": "当前项目尚未初始化 Git 仓库",
+  "git.initHint": "点击上方按钮初始化版本管理",
+  "git.history": "提交历史",
+  "git.branches": "分支",
+  "git.currentBranch": "当前分支",
+  "git.head": "HEAD",
+  "git.headDesc": "当前检出的提交节点",
+  "git.newBranch": "新建分支",
+  "git.newBranchPlaceholder": "分支名称…",
+  "git.switchBranch": "切换分支",
+  "git.switching": "切换中…",
+  "git.changes": "变更",
+  "git.noChanges": "工作区干净，无变更",
+  "git.fileAdded": "新增",
+  "git.fileModified": "修改",
+  "git.fileDeleted": "删除",
+  "git.fileUntracked": "未跟踪",
+  "git.revertFile": "还原文件",
+  "git.resetCommit": "回退到此版本",
+  "git.resetConfirm": "确认回退到 {oid}？当前未提交的更改将丢失。",
+  "git.resetToNodeHint": "点击恢复到此节点的代码状态并新建对话",
+  "git.autoCommit": "自动提交",
+  "git.autoCommitDesc": "Agent 生成代码后自动创建提交",
+  "git.refresh": "刷新",
+  "git.loading": "加载中…",
+  "git.error": "Git 操作失败",
+  "git.emptyMessage": "提交信息不能为空",
+  "git.copyHash": "复制哈希",
+  "git.copied": "已复制",
+  "git.viewFiles": "查看文件",
+  "git.changedFiles": "变更文件",
+  "git.diffWithPrev": "与上一版本对比",
+  // ── issues tab ──
+  "issues.title": "系统问题",
+  "issues.noIssues": "未检测到问题",
+  // ── left panel ──
+  "leftPanel.project": "项目",
+  "leftPanel.projectDesc": "项目信息",
+  "leftPanel.branches": "分支",
+  "leftPanel.branchesDesc": "分支管理",
+  "leftPanel.extensions": "扩展",
+  "leftPanel.extensionsDesc": "扩展管理",
+  "leftPanel.basicInfo": "基本信息",
+  "leftPanel.noProject": "未打开项目",
+  "leftPanel.noBranches": "暂无分支",
+  // ── checkpoint ──
+  "checkpoint.title": "任务检查点",
+  "checkpoint.noTasks": "暂无任务记录",
+  "checkpoint.taskRunning": "运行中",
+  "checkpoint.taskCompleted": "已完成",
+  "checkpoint.taskError": "出错",
+  "checkpoint.checkpoints": "检查点",
+  "checkpoint.createdAt": "创建时间",
+  "checkpoint.files": "文件数",
+  "checkpoint.refresh": "刷新"
 };
 const en = {
   // ── common ──
@@ -7370,6 +7612,7 @@ const en = {
   "common.saving": "Saving…",
   "common.cancel": "Cancel",
   "common.close": "Close",
+  "common.back": "Back",
   "common.retry": "Retry",
   "common.run": "Run",
   "common.stop": "Stop",
@@ -7398,6 +7641,7 @@ const en = {
   "welcome.noRecent": "No records",
   // ── tabs ──
   "tabs.preview": "Preview",
+  "tabs.issues": "Issues",
   "tabs.log": "Logs",
   "tabs.db": "KV Store",
   // ── window controls ──
@@ -7419,6 +7663,7 @@ const en = {
   "agent.deleteChat": "Delete conversation",
   "agent.settings": "Agent settings",
   "agent.serverFailed": "⚠️ OpenCode failed to start",
+  "agent.queryFailed": "Request failed, please retry",
   // ── tool call card ──
   "tool.completed": "Done",
   "tool.error": "Error",
@@ -7539,6 +7784,9 @@ const en = {
   "log.clearTitle": "Clear logs",
   "log.clear": "🗑 Clear",
   "log.empty": "No logs yet",
+  "log.copy": "📋 Copy",
+  "log.copyTitle": "Copy logs",
+  "log.copied": "✓ Copied",
   // ── preview tab ──
   "preview.frontend": "Frontend",
   "preview.frontendTitle": "Frontend page",
@@ -7546,7 +7794,11 @@ const en = {
   "preview.adminTitle": "Admin console",
   "preview.waitingServer": "Waiting for server…",
   "preview.copied": "Copied",
-  "preview.openExternal": "Open in new window",
+  "preview.openExternal": "Browser preview",
+  "preview.lanQr": "Mobile preview",
+  "preview.lanQrTitle": "LAN Mobile Preview",
+  "preview.lanQrScanTip": "Connect your phone to the same network, then scan to preview in the mobile browser",
+  "preview.lanQrNoIp": "No LAN IP detected, please check your network connection",
   "preview.devtools": "DevTools (F12)",
   "preview.screenshot": "Screenshot",
   "preview.record": "Record",
@@ -7583,6 +7835,25 @@ const en = {
   "model.enterEnv": "Enter {env}",
   "model.enterApiKey": "Enter API Key",
   "model.noModels": "No models available for this provider",
+  "model.searchPlaceholder": "Search models...",
+  "model.searchResults": "Search results",
+  "model.noResults": "No matching models",
+  "model.connectedProviders": "Connected providers",
+  "model.current": "Current",
+  "model.recent": "Recent",
+  "model.showMore": "Show {count} more providers",
+  "model.configureProvider": "Configure provider",
+  "model.saveAndConnect": "Save & Connect",
+  "model.connect": "Connect",
+  "model.oauthDesc": "You will be redirected to authenticate with this provider in your browser.",
+  "model.providerId": "Provider ID",
+  "model.envVar": "Env var",
+  "model.selectOption": "Select…",
+  "model.connectProvider": "Connect {name}",
+  "model.providerDesc": "Enter your {provider} API key to connect your account and use {provider} models in OpenCode.",
+  "model.chooseMethod": "Choose how to sign in to {provider}.",
+  "model.apiKeyPlaceholder": "API key",
+  "model.submit": "Submit",
   // ── agent settings modal ──
   "agentSettings.modelConfig": "Model configuration",
   "agentSettings.providerId": "Provider (Provider ID)",
@@ -7666,7 +7937,71 @@ const en = {
   "update.downloading": "Downloading v{version}…",
   "update.downloaded": "downloaded, will apply after restart",
   "update.restartNow": "Restart now",
-  "update.restartLater": "Restart later"
+  "update.restartLater": "Restart later",
+  // ── git tab ──
+  "git.initRepo": "Init repository",
+  "git.initRepoTitle": "Initialize a Git repository in the current project",
+  "git.committing": "Committing…",
+  "git.committed": "Committed",
+  "git.commitMessage": "Commit message",
+  "git.commitPlaceholder": "Describe the changes…",
+  "git.commitBtn": "Commit",
+  "git.noHistory": "No commit history yet. Run the agent to auto-record changes.",
+  "git.noRepo": "No Git repository initialized for this project",
+  "git.initHint": "Click the button above to initialize version control",
+  "git.history": "Commit history",
+  "git.branches": "Branches",
+  "git.currentBranch": "Current branch",
+  "git.head": "HEAD",
+  "git.headDesc": "Currently checked out commit",
+  "git.newBranch": "New branch",
+  "git.newBranchPlaceholder": "Branch name…",
+  "git.switchBranch": "Switch branch",
+  "git.switching": "Switching…",
+  "git.changes": "Changes",
+  "git.noChanges": "Working tree clean, no changes",
+  "git.fileAdded": "Added",
+  "git.fileModified": "Modified",
+  "git.fileDeleted": "Deleted",
+  "git.fileUntracked": "Untracked",
+  "git.revertFile": "Revert file",
+  "git.resetCommit": "Reset to this version",
+  "git.resetConfirm": "Confirm reset to {oid}? Uncommitted changes will be lost.",
+  "git.resetToNodeHint": "Click to restore code to this node and start a new conversation",
+  "git.autoCommit": "Auto commit",
+  "git.autoCommitDesc": "Auto-create commits when agent generates code",
+  "git.refresh": "Refresh",
+  "git.loading": "Loading…",
+  "git.error": "Git operation failed",
+  "git.emptyMessage": "Commit message cannot be empty",
+  "git.copyHash": "Copy hash",
+  "git.copied": "Copied",
+  "git.viewFiles": "View files",
+  "git.changedFiles": "Changed files",
+  "git.diffWithPrev": "Diff with previous",
+  // ── issues tab ──
+  "issues.title": "Issues",
+  "issues.noIssues": "No issues detected",
+  // ── left panel ──
+  "leftPanel.project": "Project",
+  "leftPanel.projectDesc": "Project info",
+  "leftPanel.branches": "Branches",
+  "leftPanel.branchesDesc": "Branch management",
+  "leftPanel.extensions": "Extensions",
+  "leftPanel.extensionsDesc": "Extensions",
+  "leftPanel.basicInfo": "Basic Info",
+  "leftPanel.noProject": "No project opened",
+  "leftPanel.noBranches": "No branches",
+  // ── checkpoint ──
+  "checkpoint.title": "Task Checkpoints",
+  "checkpoint.noTasks": "No task records",
+  "checkpoint.taskRunning": "Running",
+  "checkpoint.taskCompleted": "Completed",
+  "checkpoint.taskError": "Error",
+  "checkpoint.checkpoints": "Checkpoints",
+  "checkpoint.createdAt": "Created at",
+  "checkpoint.files": "Files",
+  "checkpoint.refresh": "Refresh"
 };
 const DICTS = { zh, en };
 const STORAGE_KEY = "devtool-lang";
@@ -7728,11 +8063,64 @@ function partsToDisplay(msg2, isStreaming = false) {
         result: part.result,
         status: part.status
       });
+    } else if (part.type === "file") {
+      const attachment = {
+        name: part.filename ?? part.url.split("/").pop() ?? "file",
+        mime: part.mimeType,
+        url: part.url
+      };
+      const lastFile = contentParts.filter((p) => p.kind === "file").pop();
+      if (lastFile) {
+        lastFile.files.push(attachment);
+      } else {
+        contentParts.push({ kind: "file", files: [attachment] });
+      }
     }
   }
   return { id: msg2.id, role: msg2.role, contentParts, isStreaming, createdAt: msg2.createdAt };
 }
 const _knownUserMsgIds = {};
+const TITLE_CACHE_KEY = "shapp_devtool_agent_titles";
+const RECENT_MODELS_KEY = "shapp_devtool_recent_models";
+const MAX_RECENT_MODELS = 10;
+function loadRecentModels() {
+  try {
+    const raw = localStorage.getItem(RECENT_MODELS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function saveRecentModels(models) {
+  try {
+    localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(models.slice(0, MAX_RECENT_MODELS)));
+  } catch {
+  }
+}
+function loadTitleCache() {
+  try {
+    const raw = localStorage.getItem(TITLE_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function saveTitleCache(cache) {
+  try {
+    localStorage.setItem(TITLE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+  }
+}
+const _titleCache = loadTitleCache();
+function resolveTitle(sessionId, serverTitle) {
+  const isDefault = !serverTitle || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(serverTitle);
+  if (!isDefault) {
+    _titleCache[sessionId] = serverTitle;
+    saveTitleCache(_titleCache);
+    return serverTitle;
+  }
+  return _titleCache[sessionId] || "";
+}
 const useAgentStore = create$1((set, get) => ({
   sessions: [],
   activeSessionId: null,
@@ -7741,17 +8129,19 @@ const useAgentStore = create$1((set, get) => ({
   streamingSessionId: null,
   panelVisible: true,
   panelWidth: 360,
-  selectedProvider: "anthropic",
-  selectedModel: "claude-opus-4-5",
+  selectedProvider: "",
+  selectedModel: "",
   providers: [],
   configData: null,
   catalogProviders: [],
   catalogLoading: false,
+  recentModels: loadRecentModels(),
   mode: "build",
   initialized: false,
   serverStatus: "unknown",
   serverError: null,
   pendingQuestion: null,
+  lastFailedQuery: null,
   // ── init ──────────────────────────────────────────────────────────
   init: async () => {
     if (get().initialized) return;
@@ -7785,8 +8175,17 @@ const useAgentStore = create$1((set, get) => ({
       return;
     }
     set({ serverStatus: "ready", serverError: null });
+    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
+    window.devtool.agent.subscribe().catch(() => {
+    });
+    window.devtool.agent.onQuestion((questionData) => {
+      set({ pendingQuestion: questionData });
+    });
     try {
-      const sessions = await window.devtool.agent.listSessions();
+      const sessions = (await window.devtool.agent.listSessions()).map((s) => ({
+        ...s,
+        title: resolveTitle(s.id, s.title)
+      }));
       set({ sessions });
     } catch {
     }
@@ -7798,36 +8197,35 @@ const useAgentStore = create$1((set, get) => ({
     try {
       const configData = await window.devtool.agent.getConfig();
       set({ configData });
-      const s = get();
-      if (s.selectedProvider === "anthropic" && configData.defaultProviderId) {
+      if (configData.defaultProviderId && configData.defaultModelId) {
         set({
           selectedProvider: configData.defaultProviderId,
           selectedModel: configData.defaultModelId
         });
+        window.devtool.agent.setPrefs({
+          selectedProvider: configData.defaultProviderId,
+          selectedModel: configData.defaultModelId
+        }).catch(() => {
+        });
       }
     } catch {
     }
-    window.devtool.agent.onEvent((event) => get()._handleEvent(event));
-    window.devtool.agent.subscribe().catch(() => {
-    });
-    window.devtool.agent.onQuestion((questionData) => {
-      set({ pendingQuestion: questionData });
-    });
   },
   // ── createSession ─────────────────────────────────────────────────
   // ── newSession (lazy — no IPC until first message) ───────────────────
   newSession: () => {
-    set({ activeSessionId: null });
+    set({ activeSessionId: null, lastFailedQuery: null });
   },
   // ── createSession ────────────────────────────────────────
   createSession: async (directory) => {
     const session = await window.devtool.agent.createSession(directory);
+    const resolved = { ...session, title: resolveTitle(session.id, session.title) };
     set((s) => ({
-      sessions: [session, ...s.sessions],
-      activeSessionId: session.id,
-      messages: { ...s.messages, [session.id]: [] }
+      sessions: [resolved, ...s.sessions],
+      activeSessionId: resolved.id,
+      messages: { ...s.messages, [resolved.id]: [] }
     }));
-    return session.id;
+    return resolved.id;
   },
   // ── deleteSession ─────────────────────────────────────────────────
   deleteSession: async (id) => {
@@ -7861,10 +8259,14 @@ const useAgentStore = create$1((set, get) => ({
     if (!sessionId) {
       sessionId = await get().createSession(projectDir);
     }
+    set({ lastFailedQuery: { text: text2, files: files?.length ? files : void 0 } });
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
-      contentParts: [{ kind: "text", text: text2 }],
+      contentParts: [
+        { kind: "text", text: text2 },
+        ...files && files.length > 0 ? [{ kind: "file", files }] : []
+      ],
       isStreaming: false,
       createdAt: Date.now()
     };
@@ -7886,8 +8288,12 @@ const useAgentStore = create$1((set, get) => ({
     }));
     set((s) => {
       const session = s.sessions.find((sess) => sess.id === sessionId);
-      if (!session || session.title !== "New Session") return {};
+      if (!session) return {};
+      const isDefault = !session.title || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(session.title);
+      if (!isDefault) return {};
       const autoTitle = text2.slice(0, 35).trim() + (text2.length > 35 ? "…" : "");
+      _titleCache[sessionId] = autoTitle;
+      saveTitleCache(_titleCache);
       return {
         sessions: s.sessions.map(
           (sess) => sess.id === sessionId ? { ...sess, title: autoTitle } : sess
@@ -7897,12 +8303,19 @@ const useAgentStore = create$1((set, get) => ({
     try {
       await window.devtool.agent.sendPrompt(sessionId, text2, projectDir, get().mode, files);
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       set((s) => ({
         isStreaming: false,
         streamingSessionId: null,
         messages: {
           ...s.messages,
-          [sessionId]: (s.messages[sessionId] ?? []).filter((m) => m.id !== placeholderId)
+          [sessionId]: (s.messages[sessionId] ?? []).filter((m) => m.id !== placeholderId).concat({
+            id: `error-${Date.now()}`,
+            role: "system",
+            contentParts: [{ kind: "text", text: `❌ ${errMsg}` }],
+            isStreaming: false,
+            createdAt: Date.now()
+          })
         }
       }));
     }
@@ -7914,7 +8327,63 @@ const useAgentStore = create$1((set, get) => ({
       await window.devtool.agent.abortSession(streamingSessionId).catch(() => {
       });
     }
-    set({ isStreaming: false, streamingSessionId: null });
+    set({ isStreaming: false, streamingSessionId: null, lastFailedQuery: null });
+  },
+  // ── retryLastMessage ──────────────────────────────────────────────
+  retryLastMessage: async () => {
+    const { lastFailedQuery, isStreaming, activeSessionId, messages: messages2 } = get();
+    if (!lastFailedQuery || isStreaming) return;
+    const sessionId = activeSessionId;
+    if (!sessionId) return;
+    const { text: text2, files } = lastFailedQuery;
+    set({ lastFailedQuery: null });
+    const currentMsgs = messages2[sessionId] ?? [];
+    let lastUserIdx = -1;
+    for (let i = currentMsgs.length - 1; i >= 0; i--) {
+      if (currentMsgs[i].role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    const filtered = lastUserIdx >= 0 ? currentMsgs.slice(0, lastUserIdx + 1) : currentMsgs;
+    const placeholderId = `streaming-${Date.now()}`;
+    const placeholder = {
+      id: placeholderId,
+      role: "assistant",
+      contentParts: [],
+      isStreaming: true,
+      createdAt: Date.now()
+    };
+    set((s) => ({
+      isStreaming: true,
+      streamingSessionId: sessionId,
+      lastFailedQuery: { text: text2, files },
+      messages: {
+        ...s.messages,
+        [sessionId]: [...filtered, placeholder]
+      }
+    }));
+    try {
+      const pkg = usePackageStore.getState().current;
+      const projectDir = pkg?.dir;
+      await window.devtool.agent.sendPrompt(sessionId, text2, projectDir, get().mode, files);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      set((s) => ({
+        isStreaming: false,
+        streamingSessionId: null,
+        messages: {
+          ...s.messages,
+          [sessionId]: (s.messages[sessionId] ?? []).filter((m) => m.id !== placeholderId).concat({
+            id: `error-${Date.now()}`,
+            role: "system",
+            contentParts: [{ kind: "text", text: `❌ ${errMsg}` }],
+            isStreaming: false,
+            createdAt: Date.now()
+          })
+        }
+      }));
+    }
   },
   // ── togglePanel ───────────────────────────────────────────────────
   togglePanel: () => {
@@ -7936,11 +8405,17 @@ const useAgentStore = create$1((set, get) => ({
     set({ selectedProvider: provider, selectedModel: model });
     window.devtool.agent.setPrefs({ selectedProvider: provider, selectedModel: model }).catch(() => {
     });
+    const recent = get().recentModels.filter(
+      (r2) => !(r2.providerId === provider && r2.modelId === model)
+    );
+    const updated = [{ providerId: provider, modelId: model }, ...recent].slice(0, MAX_RECENT_MODELS);
+    set({ recentModels: updated });
+    saveRecentModels(updated);
   },
   // ── setMode ───────────────────────────────────────────────────────
-  setMode: (mode) => {
-    set({ mode });
-    window.devtool.agent.setPrefs({ mode }).catch(() => {
+  setMode: (mode2) => {
+    set({ mode: mode2 });
+    window.devtool.agent.setPrefs({ mode: mode2 }).catch(() => {
     });
   },
   // ── Provider catalog ──────────────────────────────────────────────
@@ -7964,6 +8439,17 @@ const useAgentStore = create$1((set, get) => ({
     } catch {
     }
   },
+  setProviderConfig: async (providerId, config) => {
+    await window.devtool.agent.setProviderConfig(providerId, config);
+    try {
+      const [configData, catalog] = await Promise.all([
+        window.devtool.agent.getConfig(),
+        window.devtool.agent.listCatalogProviders()
+      ]);
+      set({ configData, catalogProviders: catalog });
+    } catch {
+    }
+  },
   // ── handleProjectChange ───────────────────────────────────────────
   // Called whenever the user opens a different project folder.
   // Restarts the OpenCode server with the new cwd, then reloads the
@@ -7973,10 +8459,13 @@ const useAgentStore = create$1((set, get) => ({
   handleProjectChange: async (dir) => {
     await window.devtool.agent.setProject(dir).catch(() => {
     });
-    set({ sessions: [], activeSessionId: null, messages: {}, isStreaming: false, streamingSessionId: null, pendingQuestion: null });
+    set({ sessions: [], activeSessionId: null, messages: {}, isStreaming: false, streamingSessionId: null, pendingQuestion: null, lastFailedQuery: null });
     await new Promise((r2) => setTimeout(r2, 800));
     try {
-      const sessions = await window.devtool.agent.listSessions();
+      const sessions = (await window.devtool.agent.listSessions()).map((s) => ({
+        ...s,
+        title: resolveTitle(s.id, s.title)
+      }));
       const lastSessionId = sessions[0]?.id ?? null;
       set({ sessions, activeSessionId: lastSessionId });
       if (lastSessionId) {
@@ -8098,27 +8587,60 @@ const useAgentStore = create$1((set, get) => ({
       });
     } else if (type === "session.updated") {
       const info2 = props.info;
-      if (!info2?.id || typeof info2.title !== "string" || !info2.title.trim()) return;
-      if (/^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(info2.title)) return;
+      if (!info2?.id) return;
+      const rawTitle = typeof info2.title === "string" ? info2.title : "";
+      if (!rawTitle || /^New session\s*[-\u2013]\s*\d{4}-\d{2}-\d{2}/i.test(rawTitle)) return;
+      const title2 = resolveTitle(info2.id, rawTitle);
       set((s) => ({
         sessions: s.sessions.map(
-          (sess) => sess.id === info2.id ? { ...sess, title: info2.title } : sess
+          (sess) => sess.id === info2.id ? { ...sess, title: title2 } : sess
         )
       }));
     } else if (type === "session.idle") {
       const sessionId = props.sessionID ?? "";
       if (!sessionId) return;
+      const wasStreaming = get().streamingSessionId === sessionId;
       set((s) => {
-        const msgs = s.messages[sessionId] ?? [];
-        const updated = msgs.map(
+        const msgs2 = s.messages[sessionId] ?? [];
+        const updated = msgs2.map(
           (m) => m.isStreaming ? { ...m, isStreaming: false } : m
         );
         return {
           isStreaming: s.streamingSessionId === sessionId ? false : s.isStreaming,
           streamingSessionId: s.streamingSessionId === sessionId ? null : s.streamingSessionId,
+          lastFailedQuery: s.streamingSessionId === sessionId ? null : s.lastFailedQuery,
           messages: { ...s.messages, [sessionId]: updated }
         };
       });
+      if (!wasStreaming) {
+        console.log("[AgentStore] auto-commit skipped: session was not streaming, session:", sessionId);
+        return;
+      }
+      const pkg = usePackageStore.getState().current;
+      if (!pkg?.dir) {
+        console.log("[AgentStore] auto-commit skipped: no project dir, session:", sessionId);
+        return;
+      }
+      const msgs = get().messages[sessionId] ?? [];
+      const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+      let summary = "AI generated code";
+      if (lastUser) {
+        const queryText = lastUser.contentParts.filter((p) => p.kind === "text").map((p) => p.text).join("").trim();
+        if (queryText.length > 3) {
+          summary = queryText.length > 80 ? queryText.slice(0, 77) + "…" : queryText;
+        }
+      }
+      console.log("[AgentStore] triggering auto-commit for session:", sessionId, "summary:", summary.slice(0, 40));
+      window.devtool.git.autoCommit(pkg.dir, sessionId, summary).then((result) => {
+        if (result) {
+          console.log("[AgentStore] auto-commit created:", result.shortOid, result.fileCount, "files");
+          useGitStore.getState().fullRefresh(pkg.dir).catch(
+            (err) => console.warn("[AgentStore] git fullRefresh failed:", err)
+          );
+        } else {
+          console.log("[AgentStore] auto-commit: no file changes");
+        }
+      }).catch((err) => console.warn("[AgentStore] auto-commit failed:", err));
     } else if (type === "session.error") {
       const sessionId = props.sessionID;
       const errMsg = props.error?.data?.message ?? t("common.unknownError");
@@ -8126,7 +8648,7 @@ const useAgentStore = create$1((set, get) => ({
         if (!sessionId) return { isStreaming: false, streamingSessionId: null };
         const msgs = s.messages[sessionId] ?? [];
         const updated = msgs.map(
-          (m) => m.isStreaming ? { ...m, isStreaming: false, textContent: m.textContent || t("tool.errorMessage", { msg: errMsg }) } : m
+          (m) => m.isStreaming ? { ...m, isStreaming: false, contentParts: [...m.contentParts, { kind: "text", text: `❌ ${t("tool.errorMessage", { msg: errMsg })}` }] } : m
         );
         return {
           isStreaming: false,
@@ -8151,6 +8673,7 @@ const usePackageStore = create$1((set, get) => ({
     }
   },
   setManifest: (manifest) => set((s) => s.current ? { current: { ...s.current, manifest } } : {}),
+  setWarnings: (warnings) => set((s) => s.current ? { current: { ...s.current, warnings } } : {}),
   setRecentFolders: (folders) => set({ recentFolders: folders }),
   setLoading: (loading2) => set({ isLoading: loading2 }),
   setError: (error2) => set({ error: error2 }),
@@ -8199,12 +8722,12 @@ const useExecutionStore = create$1((set) => ({
   setMockContext: (ctx) => set({ mockContext: ctx }),
   setSelectedEntry: (entry) => set({ selectedEntry: entry })
 }));
-const root$9 = "_root_191cq_1";
+const root$a = "_root_191cq_1";
 const titlebar$1 = "_titlebar_191cq_97";
 const winControls$1 = "_winControls_191cq_115";
 const winBtn$1 = "_winBtn_191cq_133";
 const closeBtn$6 = "_closeBtn_191cq_165";
-const header$5 = "_header_191cq_177";
+const header$7 = "_header_191cq_177";
 const logoImage = "_logoImage_191cq_195";
 const title$2 = "_title_191cq_97";
 const subtitle = "_subtitle_191cq_223";
@@ -8227,13 +8750,13 @@ const recentList = "_recentList_191cq_511";
 const recentItem = "_recentItem_191cq_529";
 const recentIcon = "_recentIcon_191cq_567";
 const recentPath = "_recentPath_191cq_577";
-const styles$k = {
-  root: root$9,
+const styles$n = {
+  root: root$a,
   titlebar: titlebar$1,
   winControls: winControls$1,
   winBtn: winBtn$1,
   closeBtn: closeBtn$6,
-  header: header$5,
+  header: header$7,
   logoImage,
   title: title$2,
   subtitle,
@@ -8366,38 +8889,38 @@ function WelcomePage() {
     await window.devtool.package.clearRecent();
     setRecentFolders([]);
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.root, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.titlebar, "data-drag-region": true, children: !isMac && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.winControls, "data-drag-region-exclude": true, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$k.winBtn, onClick: () => window.devtool.window.minimize(), "aria-label": t2("win.minimize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MinimizeIcon$1, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$k.winBtn, onClick: () => window.devtool.window.maximize(), "aria-label": t2("win.maximize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MaximizeIcon$1, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `${styles$k.winBtn} ${styles$k.closeBtn}`, onClick: () => window.devtool.window.close(), "aria-label": t2("win.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon$2, {}) })
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.titlebar, "data-drag-region": true, children: !isMac && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.winControls, "data-drag-region-exclude": true, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$n.winBtn, onClick: () => window.devtool.window.minimize(), "aria-label": t2("win.minimize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MinimizeIcon$1, {}) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$n.winBtn, onClick: () => window.devtool.window.maximize(), "aria-label": t2("win.maximize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MaximizeIcon$1, {}) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `${styles$n.winBtn} ${styles$n.closeBtn}`, onClick: () => window.devtool.window.close(), "aria-label": t2("win.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon$3, {}) })
     ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.header, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$k.logoImage, src: logoPng, alt: "Shapp logo" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.header, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$n.logoImage, src: logoPng, alt: "Shapp logo" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: styles$k.title, children: "Shapp DevTool" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: styles$k.subtitle, children: t2("welcome.subtitle") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: styles$n.title, children: "Shapp DevTool" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: styles$n.subtitle, children: t2("welcome.subtitle") })
       ] })
     ] }),
-    error2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.errorBanner, children: error2 }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.body, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.openSection, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.sectionLabel, children: t2("welcome.openSection") }),
+    error2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.errorBanner, children: error2 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.body, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.openSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.sectionLabel, children: t2("welcome.openSection") }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "div",
           {
-            className: `${styles$k.dropZone} ${dragState === "valid" ? styles$k.dropZoneActive : dragState === "invalid" ? styles$k.dropZoneInvalid : ""}`,
+            className: `${styles$n.dropZone} ${dragState === "valid" ? styles$n.dropZoneActive : dragState === "invalid" ? styles$n.dropZoneInvalid : ""}`,
             onDragEnter: handleDragEnter,
             onDragLeave: handleDragLeave,
             onDragOver: handleDragOver,
             onDrop: handleDrop,
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropIcon, children: "📁" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.dropHint, children: t2("welcome.dropHint") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.dropIcon, children: "📁" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.dropHint, children: t2("welcome.dropHint") }),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
-                  className: styles$k.openBtn,
+                  className: styles$n.openBtn,
                   onClick: handleOpenFolder,
                   disabled: loading2,
                   children: loading2 ? t2("common.loading") : t2("welcome.selectFolder")
@@ -8407,21 +8930,21 @@ function WelcomePage() {
           }
         )
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.divider }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.recentSection, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.sectionLabelRow, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sectionLabel, children: t2("welcome.recent") }),
-          recentFolders.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$k.clearBtn, onClick: handleClearRecent, children: t2("welcome.clear") })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.divider }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.recentSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$n.sectionLabelRow, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$n.sectionLabel, children: t2("welcome.recent") }),
+          recentFolders.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$n.clearBtn, onClick: handleClearRecent, children: t2("welcome.clear") })
         ] }),
-        recentFolders.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$k.recentEmpty, children: t2("welcome.noRecent") }) : /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: styles$k.recentList, children: recentFolders.map((dir) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        recentFolders.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$n.recentEmpty, children: t2("welcome.noRecent") }) : /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: styles$n.recentList, children: recentFolders.map((dir) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: styles$k.recentItem,
+            className: styles$n.recentItem,
             onClick: () => handleLoadRecent(dir),
             disabled: loading2,
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.recentIcon, children: "📁" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.recentPath, children: dir })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$n.recentIcon, children: "📁" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$n.recentPath, children: dir })
             ]
           }
         ) }, dir)) })
@@ -8435,7 +8958,7 @@ function MinimizeIcon$1() {
 function MaximizeIcon$1() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 11 11", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "2", width: "7", height: "7", rx: "1.2", stroke: "currentColor", strokeWidth: "1.4" }) });
 }
-function CloseIcon$2() {
+function CloseIcon$3() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 11 11", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round" }) });
 }
 const useToastStore = create$1((set) => ({
@@ -8486,7 +9009,7 @@ const iconBtn$1 = "_iconBtn_1wj9e_517";
 const iconBtnActive = "_iconBtnActive_1wj9e_545";
 const winBtn = "_winBtn_1wj9e_567";
 const closeBtn$5 = "_closeBtn_1wj9e_593";
-const styles$j = {
+const styles$m = {
   titlebar,
   menuBar,
   commandWrap,
@@ -8632,7 +9155,7 @@ function Titlebar({
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(PackageIcon, {}), label: t2("menu.build"), onClick: runMenuItem(onBuild), disabled: !pkg }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsIcon$1, {}), label: t2("menu.settings"), onClick: runMenuItem(onOpenSettings) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsIcon, {}), label: t2("menu.settings"), onClick: runMenuItem(onOpenSettings) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { label: t2("menu.exit"), onClick: runMenuItem(() => window.devtool.window.close()) })
       ] })
@@ -8674,35 +9197,35 @@ function Titlebar({
       items: /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { label: t2("menu.about"), onClick: runMenuItem(onOpenAbout) }) })
     }
   ];
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.titlebar, children: [
-    isMac && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.macSpacer }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.appIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$j.appIconImg, src: logoPng, alt: "Shapp" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.menuBar, ref: menuBarRef, children: menus.map((m) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.menuRoot, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.titlebar, children: [
+    isMac && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.macSpacer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.appIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$m.appIconImg, src: logoPng, alt: "Shapp" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.menuBar, ref: menuBarRef, children: menus.map((m) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.menuRoot, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
-          className: `${styles$j.menuBtn} ${openMenu === m.id ? styles$j.menuBtnActive : ""}`,
+          className: `${styles$m.menuBtn} ${openMenu === m.id ? styles$m.menuBtnActive : ""}`,
           onClick: () => setOpenMenu(openMenu === m.id ? null : m.id),
           onMouseEnter: () => openMenu && setOpenMenu(m.id),
           children: m.label
         }
       ),
-      openMenu === m.id && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.menu, children: m.items })
+      openMenu === m.id && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.menu, children: m.items })
     ] }, m.id)) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.dragRegion, "data-drag-region": true }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.commandWrap, ref: commandRef, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$j.commandCenter, onClick: () => setCommandOpen((v2) => !v2), title: t2("titlebar.commandHint"), children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$j.statusDot} ${isRunning ? styles$j.dotRunning : styles$j.dotReady}` }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(SearchIcon, {}),
-        pkg ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$j.commandText, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.commandName, children: appName2 }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$j.commandEntry, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.dragRegion, "data-drag-region": true }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.commandWrap, ref: commandRef, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$m.commandCenter, onClick: () => setCommandOpen((v2) => !v2), title: t2("titlebar.commandHint"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$m.statusDot} ${isRunning ? styles$m.dotRunning : styles$m.dotReady}` }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(SearchIcon$2, {}),
+        pkg ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$m.commandText, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$m.commandName, children: appName2 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$m.commandEntry, children: [
             "· ",
             activeEntryName
           ] })
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.commandHint, children: t2("titlebar.commandHint") })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$m.commandHint, children: t2("titlebar.commandHint") })
       ] }),
-      commandOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.commandMenu, children: [
+      commandOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.commandMenu, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuLabel, { children: t2("titlebar.recentOpen") }),
         recentFolders.length > 0 ? recentFolders.slice(0, 6).map((dir) => /* @__PURE__ */ jsxRuntimeExports.jsx(MenuItem, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderSmIcon, {}), label: dir.split(/[\\/]/).pop() ?? dir, sub: dir, onClick: () => handleOpenRecent(dir) }, dir)) : /* @__PURE__ */ jsxRuntimeExports.jsx(MenuEmpty, { children: t2("titlebar.noHistory") }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(MenuSep, {}),
@@ -8719,12 +9242,12 @@ function Titlebar({
         )
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.dragRegion, "data-drag-region": true }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.layoutControls, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.dragRegion, "data-drag-region": true }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.layoutControls, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
-          className: `${styles$j.iconBtn} ${sidebarVisible ? styles$j.iconBtnActive : ""}`,
+          className: `${styles$m.iconBtn} ${sidebarVisible ? styles$m.iconBtnActive : ""}`,
           onClick: onToggleSidebar,
           title: sidebarVisible ? t2("titlebar.hideSidebar") : t2("titlebar.showSidebar"),
           children: /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarIcon, {})
@@ -8733,17 +9256,17 @@ function Titlebar({
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
-          className: `${styles$j.iconBtn} ${agentPanelVisible ? styles$j.iconBtnActive : ""}`,
+          className: `${styles$m.iconBtn} ${agentPanelVisible ? styles$m.iconBtnActive : ""}`,
           onClick: onToggleAgentPanel,
           title: agentPanelVisible ? t2("titlebar.hideAgent") : t2("titlebar.showAgent"),
           children: /* @__PURE__ */ jsxRuntimeExports.jsx(SecondarySidebarIcon, {})
         }
       )
     ] }),
-    !isMac && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.winControls, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$j.winBtn, onClick: () => window.devtool.window.minimize(), "aria-label": t2("win.minimize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MinimizeIcon, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$j.winBtn, onClick: () => window.devtool.window.maximize(), "aria-label": t2("win.maximize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MaximizeIcon, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `${styles$j.winBtn} ${styles$j.closeBtn}`, onClick: () => window.devtool.window.close(), "aria-label": t2("win.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon$1, {}) })
+    !isMac && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$m.winControls, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$m.winBtn, onClick: () => window.devtool.window.minimize(), "aria-label": t2("win.minimize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MinimizeIcon, {}) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$m.winBtn, onClick: () => window.devtool.window.maximize(), "aria-label": t2("win.maximize"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(MaximizeIcon, {}) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `${styles$m.winBtn} ${styles$m.closeBtn}`, onClick: () => window.devtool.window.close(), "aria-label": t2("win.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon$2, {}) })
     ] })
   ] });
 }
@@ -8755,20 +9278,20 @@ function MenuItem({
   disabled,
   onClick
 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: `${styles$j.menuItem} ${checked ? styles$j.menuItemChecked : ""}`, onClick, disabled, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.menuItemIcon, children: checked ? /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon$1, {}) : icon2 }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.menuItemLabel, children: label2 }),
-    sub && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.menuItemSub, children: sub })
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: `${styles$m.menuItem} ${checked ? styles$m.menuItemChecked : ""}`, onClick, disabled, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$m.menuItemIcon, children: checked ? /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon$1, {}) : icon2 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$m.menuItemLabel, children: label2 }),
+    sub && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$m.menuItemSub, children: sub })
   ] });
 }
 function MenuLabel({ children }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.menuLabel, children });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.menuLabel, children });
 }
 function MenuSep() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.menuSep });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.menuSep });
 }
 function MenuEmpty({ children }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.menuEmpty, children });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$m.menuEmpty, children });
 }
 function EntryDot({ active: active2 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -8814,7 +9337,7 @@ function FolderSmIcon() {
     }
   ) });
 }
-function SettingsIcon$1() {
+function SettingsIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "15", height: "15", viewBox: "0 0 15 15", fill: "none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7.5", cy: "7.5", r: "2", stroke: "currentColor", strokeWidth: "1.3" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -8837,13 +9360,13 @@ function MinimizeIcon() {
 function MaximizeIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "2", width: "8", height: "8", rx: "1", stroke: "currentColor", strokeWidth: "1.2", fill: "none" }) });
 }
-function CloseIcon$1() {
+function CloseIcon$2() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "2.5", y1: "2.5", x2: "9.5", y2: "9.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "9.5", y1: "2.5", x2: "2.5", y2: "9.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round" })
   ] });
 }
-function SearchIcon() {
+function SearchIcon$2() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", style: { flexShrink: 0 }, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5", cy: "5", r: "3.5", stroke: "currentColor", strokeWidth: "1.3" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "7.8", y1: "7.8", x2: "10.5", y2: "10.5", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round" })
@@ -8878,598 +9401,60 @@ function PackageIcon() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "7", y1: "4", x2: "7", y2: "10", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
   ] });
 }
-const sidebar = "_sidebar_1t7l1_1";
-const manifestHeader = "_manifestHeader_1t7l1_23";
-const logoAvatar = "_logoAvatar_1t7l1_41";
-const logoOverlay = "_logoOverlay_1t7l1_63";
-const logoImg = "_logoImg_1t7l1_65";
-const headerRight = "_headerRight_1t7l1_81";
-const headerTitle = "_headerTitle_1t7l1_83";
-const saveIndicator = "_saveIndicator_1t7l1_85";
-const saveChip = "_saveChip_1t7l1_87";
-const saveChipSaving = "_saveChipSaving_1t7l1_89";
-const saveChipSaved = "_saveChipSaved_1t7l1_91";
-const saveChipError = "_saveChipError_1t7l1_93";
-const spinnerSvg = "_spinnerSvg_1t7l1_97";
-const section$2 = "_section_1t7l1_103";
-const sectionHeader = "_sectionHeader_1t7l1_105";
-const sectionChevron = "_sectionChevron_1t7l1_109";
-const sectionTitle$2 = "_sectionTitle_1t7l1_111";
-const badge = "_badge_1t7l1_113";
-const badgeDefault = "_badgeDefault_1t7l1_115";
-const badgeSuccess = "_badgeSuccess_1t7l1_117";
-const badgeWarn = "_badgeWarn_1t7l1_119";
-const sectionBody = "_sectionBody_1t7l1_121";
-const fieldList = "_fieldList_1t7l1_127";
-const fieldRow$1 = "_fieldRow_1t7l1_129";
-const fieldLabel$2 = "_fieldLabel_1t7l1_131";
-const fieldInput$1 = "_fieldInput_1t7l1_133";
-const fieldTextarea$1 = "_fieldTextarea_1t7l1_139";
-const mono = "_mono_1t7l1_141";
-const readonlyList = "_readonlyList_1t7l1_149";
-const readonlyItem = "_readonlyItem_1t7l1_151";
-const readonlyItemLabel = "_readonlyItemLabel_1t7l1_153";
-const readonlyVal = "_readonlyVal_1t7l1_155";
-const readonlySubList = "_readonlySubList_1t7l1_157";
-const readonlySubItem = "_readonlySubItem_1t7l1_159";
-const tagRow = "_tagRow_1t7l1_165";
-const tag = "_tag_1t7l1_165";
-const permReadList = "_permReadList_1t7l1_173";
-const permReadItem = "_permReadItem_1t7l1_175";
-const permReadScope = "_permReadScope_1t7l1_177";
-const permReadReason = "_permReadReason_1t7l1_179";
-const carouselAddPlus = "_carouselAddPlus_1t7l1_255";
-const mediaEditor = "_mediaEditor_1t7l1_267";
-const mediaItemOver = "_mediaItemOver_1t7l1_295";
-const coverBadge = "_coverBadge_1t7l1_299";
-const mediaItemDelete = "_mediaItemDelete_1t7l1_311";
-const mediaGridItem = "_mediaGridItem_1t7l1_327";
-const mediaEmpty = "_mediaEmpty_1t7l1_329";
-const mediaGrid = "_mediaGrid_1t7l1_327";
-const mediaGridImg = "_mediaGridImg_1t7l1_359";
-const mediaAddGridBtn = "_mediaAddGridBtn_1t7l1_361";
-const warnList = "_warnList_1t7l1_381";
-const warnItem = "_warnItem_1t7l1_383";
-const spacer$2 = "_spacer_1t7l1_389";
-const footer$3 = "_footer_1t7l1_391";
-const footerBtn = "_footerBtn_1t7l1_393";
-const styles$i = {
-  sidebar,
-  manifestHeader,
-  logoAvatar,
-  logoOverlay,
-  logoImg,
-  headerRight,
-  headerTitle,
-  saveIndicator,
-  saveChip,
-  saveChipSaving,
-  saveChipSaved,
-  saveChipError,
-  spinnerSvg,
-  section: section$2,
-  sectionHeader,
-  sectionChevron,
-  sectionTitle: sectionTitle$2,
-  badge,
-  badgeDefault,
-  badgeSuccess,
-  badgeWarn,
-  sectionBody,
-  fieldList,
-  fieldRow: fieldRow$1,
-  fieldLabel: fieldLabel$2,
-  fieldInput: fieldInput$1,
-  fieldTextarea: fieldTextarea$1,
-  mono,
-  readonlyList,
-  readonlyItem,
-  readonlyItemLabel,
-  readonlyVal,
-  readonlySubList,
-  readonlySubItem,
-  tagRow,
-  tag,
-  permReadList,
-  permReadItem,
-  permReadScope,
-  permReadReason,
-  carouselAddPlus,
-  mediaEditor,
-  mediaItemOver,
-  coverBadge,
-  mediaItemDelete,
-  mediaGridItem,
-  mediaEmpty,
-  mediaGrid,
-  mediaGridImg,
-  mediaAddGridBtn,
-  warnList,
-  warnItem,
-  spacer: spacer$2,
-  footer: footer$3,
-  footerBtn
+const tabBar$1 = "_tabBar_1uppf_1";
+const tab$2 = "_tab_1uppf_1";
+const active$2 = "_active_1uppf_53";
+const badge$2 = "_badge_1uppf_65";
+const spacer$3 = "_spacer_1uppf_99";
+const collapseBtn = "_collapseBtn_1uppf_107";
+const styles$l = {
+  tabBar: tabBar$1,
+  tab: tab$2,
+  active: active$2,
+  badge: badge$2,
+  spacer: spacer$3,
+  collapseBtn
 };
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-function Sidebar() {
-  const t2 = useT();
-  const pkg = usePackageStore((s) => s.current);
-  const setManifest = usePackageStore((s) => s.setManifest);
-  const [draft, setDraft] = reactExports.useState(null);
-  const [saveStatus, setSaveStatus] = reactExports.useState("idle");
-  const saveTimerRef = reactExports.useRef(null);
-  const skipReloadRef = reactExports.useRef(false);
-  reactExports.useEffect(() => {
-    if (pkg?.manifest) setDraft(pkg.manifest);
-  }, [pkg?.manifest]);
-  reactExports.useEffect(() => {
-    if (!window.devtool.package.onManifestReload) return;
-    return window.devtool.package.onManifestReload((m) => {
-      if (skipReloadRef.current) return;
-      setDraft(m);
-      setManifest(m);
-    });
-  }, [setManifest]);
-  const scheduleSave = reactExports.useCallback(
-    (updated) => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      setSaveStatus("saving");
-      saveTimerRef.current = setTimeout(async () => {
-        if (!pkg) return;
-        skipReloadRef.current = true;
-        try {
-          await window.devtool.package.saveManifest(pkg.dir, updated);
-          setManifest(updated);
-          setSaveStatus("saved");
-          setTimeout(() => setSaveStatus("idle"), 1500);
-        } catch {
-          setSaveStatus("error");
-        } finally {
-          setTimeout(() => {
-            skipReloadRef.current = false;
-          }, 1200);
-        }
-      }, 600);
-    },
-    [pkg, setManifest]
-  );
-  const update = reactExports.useCallback(
-    (patch2) => {
-      setDraft((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, ...patch2 };
-        scheduleSave(next);
-        return next;
-      });
-    },
-    [scheduleSave]
-  );
-  if (!pkg || !draft) return null;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: styles$i.sidebar, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.manifestHeader, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        LogoAvatar,
-        {
-          appDir: pkg.dir,
-          logo: draft.logo,
-          onLogoChange: (relPath) => update({ logo: relPath })
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.headerRight, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.headerTitle, children: draft.title || draft.name || t2("sidebar.unnamedApp") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.saveIndicator, children: [
-          saveStatus === "saving" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$i.saveChip} ${styles$i.saveChipSaving}`, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(SpinnerIcon, {}),
-            " ",
-            t2("sidebar.saving")
-          ] }),
-          saveStatus === "saved" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$i.saveChip} ${styles$i.saveChipSaved}`, children: [
-            "✓ ",
-            t2("sidebar.saved")
-          ] }),
-          saveStatus === "error" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$i.saveChip} ${styles$i.saveChipError}`, children: [
-            "! ",
-            t2("sidebar.saveError")
-          ] })
-        ] })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.appInfo"), defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.fieldList, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.title"), value: draft.title ?? "", onChange: (v2) => update({ title: v2 }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.name"), value: draft.name ?? "", onChange: (v2) => update({ name: v2 }), mono: true }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.version"), value: draft.version ?? "", onChange: (v2) => update({ version: v2 }), mono: true }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.description"), value: draft.description ?? "", onChange: (v2) => update({ description: v2 }), multiline: true })
-    ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.media"), defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-      MediaEditor,
+function TabBar({ tabs, activeTab, onTabChange, collapsed, onToggleCollapse }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$l.tabBar, children: [
+    tabs.map((tab2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
       {
-        appDir: pkg.dir,
-        manifestImages: draft.images,
-        onImagesChange: (imgs) => update({ images: imgs }),
-        t: t2
-      }
-    ) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.moreInfo"), defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyList, children: [
-      draft.id && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyItem, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.id") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.readonlyVal} ${styles$i.mono}`, children: draft.id })
-      ] }),
-      draft.runtime && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyItem, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.runtime") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.readonlyVal} ${styles$i.mono}`, children: draft.runtime })
-      ] }),
-      (draft.entry?.frontend || draft.entry?.backend || draft.entry?.admin) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyItem, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.entryPoints") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlySubList, children: [
-          draft.entry?.frontend && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlySubItem, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.entryFrontend") }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.readonlyVal} ${styles$i.mono}`, children: draft.entry.frontend })
-          ] }),
-          draft.entry?.backend && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlySubItem, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.entryBackend") }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.readonlyVal} ${styles$i.mono}`, children: draft.entry.backend })
-          ] }),
-          draft.entry?.admin && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlySubItem, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.entryAdmin") }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.readonlyVal} ${styles$i.mono}`, children: draft.entry.admin })
-          ] })
-        ] })
-      ] }),
-      (draft.capabilities ?? []).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyItem, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.capabilities") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.tagRow, children: draft.capabilities.map((cap2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.tag, children: cap2 }, cap2)) })
-      ] }),
-      (draft.permissions ?? []).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.readonlyItem, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.readonlyItemLabel, children: t2("sidebar.permissions") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: styles$i.permReadList, children: draft.permissions.map((p, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: styles$i.permReadItem, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.permReadScope} ${styles$i.mono}`, children: p.scope }),
-          p.reason && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.permReadReason, children: p.reason })
-        ] }, i)) })
-      ] })
-    ] }) }),
-    pkg.warnings && pkg.warnings.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.warnings"), badge: String(pkg.warnings.length), badgeVariant: "warn", defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: styles$i.warnList, children: pkg.warnings.map((w, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: styles$i.warnItem, children: w }, i)) }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.spacer }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.footer, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.footerBtn, onClick: () => window.devtool.shell.showItemInFolder(pkg.dir), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(FolderIcon, {}),
-      t2("sidebar.showInFolder")
-    ] }) })
+        className: `${styles$l.tab} ${activeTab === tab2.id && !collapsed ? styles$l.active : ""}`,
+        onClick: () => onTabChange(tab2.id),
+        children: [
+          tab2.label,
+          tab2.badge != null && tab2.badge > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$l.badge, children: tab2.badge > 99 ? "99+" : tab2.badge })
+        ]
+      },
+      tab2.id
+    )),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$l.spacer }),
+    onToggleCollapse && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$l.collapseBtn, onClick: onToggleCollapse, title: collapsed ? "展开" : "折叠", children: collapsed ? "▲" : "▼" })
   ] });
-}
-function LogoAvatar({ appDir, logo: logo2, onLogoChange }) {
-  const t2 = useT();
-  const [dataUrl, setDataUrl] = reactExports.useState(null);
-  const fileInputRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (!logo2) {
-      setDataUrl(null);
-      return;
-    }
-    window.devtool.package.readImage(appDir, logo2).then(setDataUrl).catch(() => setDataUrl(null));
-  }, [appDir, logo2]);
-  const handlePick = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-    const relPath = `assets/logo.${ext}`;
-    const url = await fileToDataUrl(file);
-    await window.devtool.package.saveImageFile(appDir, relPath, url);
-    setDataUrl(url);
-    onLogoChange(relPath);
-    e.target.value = "";
-  };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.logoAvatar, onClick: () => fileInputRef.current?.click(), title: t2("sidebar.clickToChange"), children: [
-    dataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: dataUrl, alt: "logo", className: styles$i.logoImg }) : /* @__PURE__ */ jsxRuntimeExports.jsx(AppIconSvg, {}),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.logoOverlay, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CameraIcon, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", style: { display: "none" }, onChange: handlePick })
-  ] });
-}
-function MediaEditor({
-  appDir,
-  manifestImages,
-  onImagesChange,
-  t: t2
-}) {
-  const [files, setFiles] = reactExports.useState([]);
-  const filesRef = reactExports.useRef([]);
-  filesRef.current = files;
-  const [dataUrls, setDataUrls] = reactExports.useState({});
-  const [initialized, setInitialized] = reactExports.useState(false);
-  const dragIndexRef = reactExports.useRef(-1);
-  const [dragOverIndex, setDragOverIndex] = reactExports.useState(-1);
-  const fileInputRef = reactExports.useRef(null);
-  const discover = reactExports.useCallback(async () => {
-    const result = [];
-    for (const n of ["cover.png", "cover.jpg", "cover.jpeg", "cover.webp"]) {
-      const url = await window.devtool.package.readImage(appDir, `assets/${n}`);
-      if (url) {
-        result.push(`assets/${n}`);
-        break;
-      }
-    }
-    if (result.length === 0) {
-      const loose = await window.devtool.package.listImages(appDir, "assets");
-      if (loose.length > 0) result.push(`assets/${loose[0]}`);
-    }
-    const carousel = await window.devtool.package.listImages(appDir, "assets/carousel");
-    for (const f of carousel) result.push(`assets/carousel/${f}`);
-    return result;
-  }, [appDir]);
-  reactExports.useEffect(() => {
-    let cancelled = false;
-    setInitialized(false);
-    (async () => {
-      const snapshot = manifestImages;
-      const paths = snapshot && snapshot.length > 0 ? snapshot : await discover();
-      const urls = {};
-      await Promise.all(paths.map(async (p) => {
-        const url = await window.devtool.package.readImage(appDir, p);
-        if (url) urls[p] = url;
-      }));
-      if (cancelled) return;
-      const valid2 = paths.filter((p) => urls[p]);
-      setFiles(valid2);
-      setDataUrls(urls);
-      setInitialized(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [appDir]);
-  reactExports.useEffect(() => {
-    return window.devtool.package.onAssetsChanged(async (info2) => {
-      if (info2.appDir !== appDir) return;
-      const ext = info2.filename.split(".").pop()?.toLowerCase() || "png";
-      const newPath = info2.role === "cover" ? `assets/cover.${ext}` : `assets/carousel/${info2.filename}`;
-      const url = await window.devtool.package.readImage(appDir, newPath);
-      if (!url) return;
-      const prev = filesRef.current;
-      let next;
-      if (info2.role === "cover") {
-        const idx = prev.findIndex((p) => p.startsWith("assets/cover."));
-        next = idx >= 0 ? prev.map((p, i) => i === idx ? newPath : p) : [newPath, ...prev];
-      } else {
-        next = prev.includes(newPath) ? prev : [...prev, newPath];
-      }
-      setDataUrls((d2) => ({ ...d2, [newPath]: url }));
-      setFiles(next);
-      onImagesChange(next);
-    });
-  }, [appDir, onImagesChange]);
-  const handleDragStart = (e, index2) => {
-    e.stopPropagation();
-    dragIndexRef.current = index2;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/x-internal", String(index2));
-  };
-  const handleDragOver = (e, index2) => {
-    e.stopPropagation();
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverIndex(index2);
-  };
-  const handleDrop = (e, dropIndex) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const from = dragIndexRef.current;
-    if (from < 0 || from === dropIndex) {
-      setDragOverIndex(-1);
-      return;
-    }
-    const next = [...files];
-    const [moved] = next.splice(from, 1);
-    next.splice(dropIndex, 0, moved);
-    setFiles(next);
-    onImagesChange(next);
-    dragIndexRef.current = -1;
-    setDragOverIndex(-1);
-  };
-  const handleDragEnd = (e) => {
-    e.stopPropagation();
-    dragIndexRef.current = -1;
-    setDragOverIndex(-1);
-  };
-  const handleAdd = () => {
-    fileInputRef.current?.click();
-  };
-  const handleFileInputChange = async (e) => {
-    const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
-    const nextFiles = [...files];
-    const nextUrls = { ...dataUrls };
-    for (const file of Array.from(fileList)) {
-      const filename = file.name;
-      const rel = `assets/carousel/${filename}`;
-      const url = await fileToDataUrl(file);
-      await window.devtool.package.saveImageFile(appDir, rel, url);
-      nextUrls[rel] = url;
-      if (!nextFiles.includes(rel)) nextFiles.push(rel);
-    }
-    setFiles(nextFiles);
-    setDataUrls(nextUrls);
-    onImagesChange(nextFiles);
-    e.target.value = "";
-  };
-  const handleDelete2 = async (index2) => {
-    const path2 = files[index2];
-    try {
-      await window.devtool.package.deleteImageFile(appDir, path2);
-    } catch {
-    }
-    const nextFiles = files.filter((_2, i) => i !== index2);
-    const nextUrls = { ...dataUrls };
-    delete nextUrls[path2];
-    setFiles(nextFiles);
-    setDataUrls(nextUrls);
-    onImagesChange(nextFiles);
-  };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.mediaEditor, children: [
-    initialized && files.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.mediaEmpty, onClick: handleAdd, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ImageIcon, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: t2("sidebar.noCover") })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.mediaGrid, children: [
-      files.map((f, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
-        {
-          className: `${styles$i.mediaGridItem} ${dragOverIndex === i ? styles$i.mediaItemOver : ""}`,
-          draggable: true,
-          onDragStart: (e) => handleDragStart(e, i),
-          onDragOver: (e) => handleDragOver(e, i),
-          onDragLeave: (e) => {
-            e.stopPropagation();
-            setDragOverIndex(-1);
-          },
-          onDrop: (e) => handleDrop(e, i),
-          onDragEnd: handleDragEnd,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: dataUrls[f], alt: "", className: styles$i.mediaGridImg, draggable: false }),
-            i === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.coverBadge, children: t2("sidebar.coverBadge") }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.mediaItemDelete, onClick: () => handleDelete2(i), title: "Remove", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeleteIcon, {}) })
-          ]
-        },
-        f
-      )),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.mediaAddGridBtn, onClick: handleAdd, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.carouselAddPlus, children: "+" }) })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        ref: fileInputRef,
-        type: "file",
-        accept: "image/*",
-        multiple: true,
-        style: { display: "none" },
-        onChange: handleFileInputChange
-      }
-    )
-  ] });
-}
-function FieldRow({ label: label2, value, onChange, mono: mono2 = false, multiline = false }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.fieldRow, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.fieldLabel, children: label2 }),
-    multiline ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "textarea",
-      {
-        className: `${styles$i.fieldInput} ${styles$i.fieldTextarea} ${mono2 ? styles$i.mono : ""}`,
-        value,
-        onChange: (e) => onChange(e.target.value),
-        rows: 2,
-        spellCheck: false
-      }
-    ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        type: "text",
-        className: `${styles$i.fieldInput} ${mono2 ? styles$i.mono : ""}`,
-        value,
-        onChange: (e) => onChange(e.target.value),
-        spellCheck: false
-      }
-    )
-  ] });
-}
-function SidebarSection({ title: title2, badge: badge2, badgeVariant = "default", defaultOpen = true, children }) {
-  const [collapsed, setCollapsed] = reactExports.useState(!defaultOpen);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.section, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.sectionHeader, onClick: () => setCollapsed(!collapsed), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.sectionChevron, children: collapsed ? "▸" : "▾" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.sectionTitle, children: title2 }),
-      badge2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$i.badge} ${badgeVariant === "success" ? styles$i.badgeSuccess : badgeVariant === "warn" ? styles$i.badgeWarn : styles$i.badgeDefault}`, children: badge2 })
-    ] }),
-    !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.sectionBody, children })
-  ] });
-}
-function AppIconSvg() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 1024 1024", version: "1.1", xmlns: "http://www.w3.org/2000/svg", width: "26", height: "26", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M915.084916 719.854978 810.23287 719.854978 810.23287 614.985536c0-23.303752-17.479093-40.782845-40.782845-40.782845s-40.782845 17.479093-40.782845 40.782845l0 110.696148L612.144326 725.681684c-23.303752 0-40.782845 17.479093-40.782845 40.782845s17.479093 40.782845 40.782845 40.782845l110.696148 0 0 110.678752c0 23.303752 17.479093 40.782845 40.782845 40.782845s40.782845-17.479093 40.782845-40.782845L804.406165 807.247374 915.084916 807.247374c23.304775 0 40.782845-17.47807 40.782845-40.782845C961.694467 743.160777 938.390715 719.854978 915.084916 719.854978L915.084916 719.854978 915.084916 719.854978zM506.427586 825.749774 506.427586 825.749774 141.658835 825.749774c-13.524015 0-23.675212-10.151197-23.675212-23.710005L117.983623 139.732461c0-13.533224 10.151197-23.684422 23.675212-23.684422l646.381593 0c13.505595 0 23.657816 10.151197 23.657816 23.684422l0 357.988324 0 0 0 0c0 13.524015 10.169617 23.676236 23.711028 23.676236 13.522991 0 23.675212-10.152221 23.675212-23.676236l0 0 0 0L859.084485 116.049063c0-27.073612-23.675212-50.759057-50.758034-50.759057L117.9826 65.290005c-27.065426 0-50.758034 23.685445-50.758034 50.759057L67.224566 825.749774c0 27.048029 23.692608 50.740638 50.758034 50.740638L506.427586 876.490412l0 0c13.522991 0 23.675212-10.169617 23.675212-23.692608C530.101775 835.883575 519.949554 825.749774 506.427586 825.749774L506.427586 825.749774 506.427586 825.749774zM501.447155 708.202591c17.479093-34.95614 58.261938-58.261938 99.044784-58.261938l46.608527 0 0-52.43421c0-46.609551 29.131481-87.392396 69.913303-104.870466l0 0 0 0-58.260915-174.774559L454.838627 580.028373l-58.261938-93.218078L181.028495 708.202591 501.447155 708.202591 501.447155 708.202591 501.447155 708.202591zM396.577712 335.331301c0-34.94693-29.130458-64.078411-64.086597-64.078411s-64.087621 29.131481-64.087621 64.078411c0 34.957163 29.130458 64.087621 64.087621 64.087621S396.577712 370.288464 396.577712 335.331301L396.577712 335.331301 396.577712 335.331301zM396.577712 335.331301", fill: "white" }) });
-}
-function FolderIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "path",
-    {
-      d: "M1 2.5C1 2.22 1.22 2 1.5 2H4L5 3H10.5C10.78 3 11 3.22 11 3.5V9.5C11 9.78 10.78 10 10.5 10H1.5C1.22 10 1 9.78 1 9.5V2.5Z",
-      stroke: "currentColor",
-      strokeWidth: "1.1",
-      fill: "none",
-      strokeLinejoin: "round"
-    }
-  ) });
-}
-function CameraIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "path",
-      {
-        d: "M1 4.5C1 3.95 1.45 3.5 2 3.5h1.5l1-1.5h3l1 1.5H12c.55 0 1 .45 1 1v6c0 .55-.45 1-1 1H2c-.55 0-1-.45-1-1v-6z",
-        stroke: "currentColor",
-        strokeWidth: "1.2",
-        fill: "none",
-        strokeLinejoin: "round"
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "7", r: "1.8", stroke: "currentColor", strokeWidth: "1.2" })
-  ] });
-}
-function ImageIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 20 20", fill: "none", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "2", width: "16", height: "16", rx: "2", stroke: "currentColor", strokeWidth: "1.2" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "7.5", r: "1.5", stroke: "currentColor", strokeWidth: "1.2" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 13l4-4 3 3 3-3 4 4", stroke: "currentColor", strokeWidth: "1.2", strokeLinejoin: "round" })
-  ] });
-}
-function DeleteIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 2l6 6M8 2l-6 6", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round" }) });
-}
-function SpinnerIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", className: styles$i.spinnerSvg, children: /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5", cy: "5", r: "3.5", stroke: "currentColor", strokeWidth: "1.5", strokeDasharray: "6 16" }) });
-}
-const tabBar = "_tabBar_13w8e_1";
-const tab$1 = "_tab_13w8e_1";
-const active$2 = "_active_13w8e_53";
-const styles$h = {
-  tabBar,
-  tab: tab$1,
-  active: active$2
-};
-function TabBar({ tabs, activeTab, onTabChange }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$h.tabBar, children: tabs.map((tab2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "button",
-    {
-      className: `${styles$h.tab} ${activeTab === tab2.id ? styles$h.active : ""}`,
-      onClick: () => onTabChange(tab2.id),
-      children: tab2.label
-    },
-    tab2.id
-  )) });
 }
 const bar = "_bar_wyd45_1";
 const dot$1 = "_dot_wyd45_27";
 const idle = "_idle_wyd45_41";
 const ready = "_ready_wyd45_43";
 const running = "_running_wyd45_45";
-const error$1 = "_error_wyd45_47";
-const label$1 = "_label_wyd45_55";
+const error$2 = "_error_wyd45_47";
+const label = "_label_wyd45_55";
 const sep = "_sep_wyd45_59";
-const item = "_item_wyd45_63";
-const spacer$1 = "_spacer_wyd45_67";
+const item$1 = "_item_wyd45_63";
+const spacer$2 = "_spacer_wyd45_67";
 const updateBtn = "_updateBtn_wyd45_71";
-const styles$g = {
+const styles$k = {
   bar,
   dot: dot$1,
   idle,
   ready,
   running,
-  error: error$1,
-  label: label$1,
+  error: error$2,
+  label,
   sep,
-  item,
-  spacer: spacer$1,
+  item: item$1,
+  spacer: spacer$2,
   updateBtn
 };
 const SDK_VERSION = "1.0.0";
@@ -9552,28 +9537,28 @@ function StatusBar() {
     });
   }, [status, pkg]);
   const statusLabel = status === "running" ? t2("status.running") : status === "error" ? t2("status.failed") : pkg ? t2("status.ready") : t2("status.noApp");
-  const statusClass = status === "running" ? styles$g.running : status === "error" ? styles$g.error : pkg ? styles$g.ready : styles$g.idle;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.bar, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$g.dot} ${statusClass}` }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.label, children: statusLabel }),
+  const statusClass = status === "running" ? styles$k.running : status === "error" ? styles$k.error : pkg ? styles$k.ready : styles$k.idle;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$k.bar, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$k.dot} ${statusClass}` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.label, children: statusLabel }),
     serverPort !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.sep, children: "|" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$g.item, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sep, children: "|" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$k.item, children: [
         t2("status.port"),
         ": ",
         serverPort
       ] })
     ] }),
     kvInfo !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.sep, children: "|" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$g.item, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sep, children: "|" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$k.item, children: [
         t2("status.kvKeys", { count: kvInfo.count }),
         kvInfo.sizeKb > 0 && ` (${kvInfo.sizeKb < 1 ? `${Math.round(kvInfo.sizeKb * 1024)} B` : `${kvInfo.sizeKb.toFixed(1)} KB`})`
       ] })
     ] }),
     memMB !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.sep, children: "|" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$g.item, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sep, children: "|" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$k.item, children: [
         t2("status.mem"),
         ": ",
         memMB,
@@ -9581,28 +9566,2154 @@ function StatusBar() {
       ] })
     ] }),
     cpuPct !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.sep, children: "|" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$g.item, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sep, children: "|" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$k.item, children: [
         "CPU: ",
         cpuPct,
         "%"
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.spacer }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$g.item, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.spacer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$k.item, children: [
       "SDK: ",
       SDK_VERSION
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.sep, children: "|" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$g.updateBtn, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$g.dot} ${styles$g.ready}` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$k.sep, children: "|" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$k.updateBtn, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$k.dot} ${styles$k.ready}` }),
       t2("status.checkUpdate")
     ] })
   ] });
 }
-const overlay$4 = "_overlay_1vpgs_1";
-const panel$1 = "_panel_1vpgs_21";
-const header$4 = "_header_1vpgs_43";
+var browser = {};
+var canPromise;
+var hasRequiredCanPromise;
+function requireCanPromise() {
+  if (hasRequiredCanPromise) return canPromise;
+  hasRequiredCanPromise = 1;
+  canPromise = function() {
+    return typeof Promise === "function" && Promise.prototype && Promise.prototype.then;
+  };
+  return canPromise;
+}
+var qrcode = {};
+var utils$1 = {};
+var hasRequiredUtils$1;
+function requireUtils$1() {
+  if (hasRequiredUtils$1) return utils$1;
+  hasRequiredUtils$1 = 1;
+  let toSJISFunction;
+  const CODEWORDS_COUNT = [
+    0,
+    // Not used
+    26,
+    44,
+    70,
+    100,
+    134,
+    172,
+    196,
+    242,
+    292,
+    346,
+    404,
+    466,
+    532,
+    581,
+    655,
+    733,
+    815,
+    901,
+    991,
+    1085,
+    1156,
+    1258,
+    1364,
+    1474,
+    1588,
+    1706,
+    1828,
+    1921,
+    2051,
+    2185,
+    2323,
+    2465,
+    2611,
+    2761,
+    2876,
+    3034,
+    3196,
+    3362,
+    3532,
+    3706
+  ];
+  utils$1.getSymbolSize = function getSymbolSize(version2) {
+    if (!version2) throw new Error('"version" cannot be null or undefined');
+    if (version2 < 1 || version2 > 40) throw new Error('"version" should be in range from 1 to 40');
+    return version2 * 4 + 17;
+  };
+  utils$1.getSymbolTotalCodewords = function getSymbolTotalCodewords(version2) {
+    return CODEWORDS_COUNT[version2];
+  };
+  utils$1.getBCHDigit = function(data) {
+    let digit = 0;
+    while (data !== 0) {
+      digit++;
+      data >>>= 1;
+    }
+    return digit;
+  };
+  utils$1.setToSJISFunction = function setToSJISFunction(f) {
+    if (typeof f !== "function") {
+      throw new Error('"toSJISFunc" is not a valid function.');
+    }
+    toSJISFunction = f;
+  };
+  utils$1.isKanjiModeEnabled = function() {
+    return typeof toSJISFunction !== "undefined";
+  };
+  utils$1.toSJIS = function toSJIS(kanji) {
+    return toSJISFunction(kanji);
+  };
+  return utils$1;
+}
+var errorCorrectionLevel = {};
+var hasRequiredErrorCorrectionLevel;
+function requireErrorCorrectionLevel() {
+  if (hasRequiredErrorCorrectionLevel) return errorCorrectionLevel;
+  hasRequiredErrorCorrectionLevel = 1;
+  (function(exports) {
+    exports.L = { bit: 1 };
+    exports.M = { bit: 0 };
+    exports.Q = { bit: 3 };
+    exports.H = { bit: 2 };
+    function fromString(string2) {
+      if (typeof string2 !== "string") {
+        throw new Error("Param is not a string");
+      }
+      const lcStr = string2.toLowerCase();
+      switch (lcStr) {
+        case "l":
+        case "low":
+          return exports.L;
+        case "m":
+        case "medium":
+          return exports.M;
+        case "q":
+        case "quartile":
+          return exports.Q;
+        case "h":
+        case "high":
+          return exports.H;
+        default:
+          throw new Error("Unknown EC Level: " + string2);
+      }
+    }
+    exports.isValid = function isValid(level2) {
+      return level2 && typeof level2.bit !== "undefined" && level2.bit >= 0 && level2.bit < 4;
+    };
+    exports.from = function from(value, defaultValue) {
+      if (exports.isValid(value)) {
+        return value;
+      }
+      try {
+        return fromString(value);
+      } catch (e) {
+        return defaultValue;
+      }
+    };
+  })(errorCorrectionLevel);
+  return errorCorrectionLevel;
+}
+var bitBuffer;
+var hasRequiredBitBuffer;
+function requireBitBuffer() {
+  if (hasRequiredBitBuffer) return bitBuffer;
+  hasRequiredBitBuffer = 1;
+  function BitBuffer() {
+    this.buffer = [];
+    this.length = 0;
+  }
+  BitBuffer.prototype = {
+    get: function(index2) {
+      const bufIndex = Math.floor(index2 / 8);
+      return (this.buffer[bufIndex] >>> 7 - index2 % 8 & 1) === 1;
+    },
+    put: function(num, length) {
+      for (let i = 0; i < length; i++) {
+        this.putBit((num >>> length - i - 1 & 1) === 1);
+      }
+    },
+    getLengthInBits: function() {
+      return this.length;
+    },
+    putBit: function(bit) {
+      const bufIndex = Math.floor(this.length / 8);
+      if (this.buffer.length <= bufIndex) {
+        this.buffer.push(0);
+      }
+      if (bit) {
+        this.buffer[bufIndex] |= 128 >>> this.length % 8;
+      }
+      this.length++;
+    }
+  };
+  bitBuffer = BitBuffer;
+  return bitBuffer;
+}
+var bitMatrix;
+var hasRequiredBitMatrix;
+function requireBitMatrix() {
+  if (hasRequiredBitMatrix) return bitMatrix;
+  hasRequiredBitMatrix = 1;
+  function BitMatrix(size) {
+    if (!size || size < 1) {
+      throw new Error("BitMatrix size must be defined and greater than 0");
+    }
+    this.size = size;
+    this.data = new Uint8Array(size * size);
+    this.reservedBit = new Uint8Array(size * size);
+  }
+  BitMatrix.prototype.set = function(row2, col, value, reserved) {
+    const index2 = row2 * this.size + col;
+    this.data[index2] = value;
+    if (reserved) this.reservedBit[index2] = true;
+  };
+  BitMatrix.prototype.get = function(row2, col) {
+    return this.data[row2 * this.size + col];
+  };
+  BitMatrix.prototype.xor = function(row2, col, value) {
+    this.data[row2 * this.size + col] ^= value;
+  };
+  BitMatrix.prototype.isReserved = function(row2, col) {
+    return this.reservedBit[row2 * this.size + col];
+  };
+  bitMatrix = BitMatrix;
+  return bitMatrix;
+}
+var alignmentPattern = {};
+var hasRequiredAlignmentPattern;
+function requireAlignmentPattern() {
+  if (hasRequiredAlignmentPattern) return alignmentPattern;
+  hasRequiredAlignmentPattern = 1;
+  (function(exports) {
+    const getSymbolSize = requireUtils$1().getSymbolSize;
+    exports.getRowColCoords = function getRowColCoords(version2) {
+      if (version2 === 1) return [];
+      const posCount = Math.floor(version2 / 7) + 2;
+      const size = getSymbolSize(version2);
+      const intervals = size === 145 ? 26 : Math.ceil((size - 13) / (2 * posCount - 2)) * 2;
+      const positions = [size - 7];
+      for (let i = 1; i < posCount - 1; i++) {
+        positions[i] = positions[i - 1] - intervals;
+      }
+      positions.push(6);
+      return positions.reverse();
+    };
+    exports.getPositions = function getPositions(version2) {
+      const coords = [];
+      const pos = exports.getRowColCoords(version2);
+      const posLength = pos.length;
+      for (let i = 0; i < posLength; i++) {
+        for (let j2 = 0; j2 < posLength; j2++) {
+          if (i === 0 && j2 === 0 || // top-left
+          i === 0 && j2 === posLength - 1 || // bottom-left
+          i === posLength - 1 && j2 === 0) {
+            continue;
+          }
+          coords.push([pos[i], pos[j2]]);
+        }
+      }
+      return coords;
+    };
+  })(alignmentPattern);
+  return alignmentPattern;
+}
+var finderPattern = {};
+var hasRequiredFinderPattern;
+function requireFinderPattern() {
+  if (hasRequiredFinderPattern) return finderPattern;
+  hasRequiredFinderPattern = 1;
+  const getSymbolSize = requireUtils$1().getSymbolSize;
+  const FINDER_PATTERN_SIZE = 7;
+  finderPattern.getPositions = function getPositions(version2) {
+    const size = getSymbolSize(version2);
+    return [
+      // top-left
+      [0, 0],
+      // top-right
+      [size - FINDER_PATTERN_SIZE, 0],
+      // bottom-left
+      [0, size - FINDER_PATTERN_SIZE]
+    ];
+  };
+  return finderPattern;
+}
+var maskPattern = {};
+var hasRequiredMaskPattern;
+function requireMaskPattern() {
+  if (hasRequiredMaskPattern) return maskPattern;
+  hasRequiredMaskPattern = 1;
+  (function(exports) {
+    exports.Patterns = {
+      PATTERN000: 0,
+      PATTERN001: 1,
+      PATTERN010: 2,
+      PATTERN011: 3,
+      PATTERN100: 4,
+      PATTERN101: 5,
+      PATTERN110: 6,
+      PATTERN111: 7
+    };
+    const PenaltyScores = {
+      N1: 3,
+      N2: 3,
+      N3: 40,
+      N4: 10
+    };
+    exports.isValid = function isValid(mask) {
+      return mask != null && mask !== "" && !isNaN(mask) && mask >= 0 && mask <= 7;
+    };
+    exports.from = function from(value) {
+      return exports.isValid(value) ? parseInt(value, 10) : void 0;
+    };
+    exports.getPenaltyN1 = function getPenaltyN1(data) {
+      const size = data.size;
+      let points = 0;
+      let sameCountCol = 0;
+      let sameCountRow = 0;
+      let lastCol = null;
+      let lastRow = null;
+      for (let row2 = 0; row2 < size; row2++) {
+        sameCountCol = sameCountRow = 0;
+        lastCol = lastRow = null;
+        for (let col = 0; col < size; col++) {
+          let module = data.get(row2, col);
+          if (module === lastCol) {
+            sameCountCol++;
+          } else {
+            if (sameCountCol >= 5) points += PenaltyScores.N1 + (sameCountCol - 5);
+            lastCol = module;
+            sameCountCol = 1;
+          }
+          module = data.get(col, row2);
+          if (module === lastRow) {
+            sameCountRow++;
+          } else {
+            if (sameCountRow >= 5) points += PenaltyScores.N1 + (sameCountRow - 5);
+            lastRow = module;
+            sameCountRow = 1;
+          }
+        }
+        if (sameCountCol >= 5) points += PenaltyScores.N1 + (sameCountCol - 5);
+        if (sameCountRow >= 5) points += PenaltyScores.N1 + (sameCountRow - 5);
+      }
+      return points;
+    };
+    exports.getPenaltyN2 = function getPenaltyN2(data) {
+      const size = data.size;
+      let points = 0;
+      for (let row2 = 0; row2 < size - 1; row2++) {
+        for (let col = 0; col < size - 1; col++) {
+          const last = data.get(row2, col) + data.get(row2, col + 1) + data.get(row2 + 1, col) + data.get(row2 + 1, col + 1);
+          if (last === 4 || last === 0) points++;
+        }
+      }
+      return points * PenaltyScores.N2;
+    };
+    exports.getPenaltyN3 = function getPenaltyN3(data) {
+      const size = data.size;
+      let points = 0;
+      let bitsCol = 0;
+      let bitsRow = 0;
+      for (let row2 = 0; row2 < size; row2++) {
+        bitsCol = bitsRow = 0;
+        for (let col = 0; col < size; col++) {
+          bitsCol = bitsCol << 1 & 2047 | data.get(row2, col);
+          if (col >= 10 && (bitsCol === 1488 || bitsCol === 93)) points++;
+          bitsRow = bitsRow << 1 & 2047 | data.get(col, row2);
+          if (col >= 10 && (bitsRow === 1488 || bitsRow === 93)) points++;
+        }
+      }
+      return points * PenaltyScores.N3;
+    };
+    exports.getPenaltyN4 = function getPenaltyN4(data) {
+      let darkCount = 0;
+      const modulesCount = data.data.length;
+      for (let i = 0; i < modulesCount; i++) darkCount += data.data[i];
+      const k = Math.abs(Math.ceil(darkCount * 100 / modulesCount / 5) - 10);
+      return k * PenaltyScores.N4;
+    };
+    function getMaskAt(maskPattern2, i, j2) {
+      switch (maskPattern2) {
+        case exports.Patterns.PATTERN000:
+          return (i + j2) % 2 === 0;
+        case exports.Patterns.PATTERN001:
+          return i % 2 === 0;
+        case exports.Patterns.PATTERN010:
+          return j2 % 3 === 0;
+        case exports.Patterns.PATTERN011:
+          return (i + j2) % 3 === 0;
+        case exports.Patterns.PATTERN100:
+          return (Math.floor(i / 2) + Math.floor(j2 / 3)) % 2 === 0;
+        case exports.Patterns.PATTERN101:
+          return i * j2 % 2 + i * j2 % 3 === 0;
+        case exports.Patterns.PATTERN110:
+          return (i * j2 % 2 + i * j2 % 3) % 2 === 0;
+        case exports.Patterns.PATTERN111:
+          return (i * j2 % 3 + (i + j2) % 2) % 2 === 0;
+        default:
+          throw new Error("bad maskPattern:" + maskPattern2);
+      }
+    }
+    exports.applyMask = function applyMask(pattern, data) {
+      const size = data.size;
+      for (let col = 0; col < size; col++) {
+        for (let row2 = 0; row2 < size; row2++) {
+          if (data.isReserved(row2, col)) continue;
+          data.xor(row2, col, getMaskAt(pattern, row2, col));
+        }
+      }
+    };
+    exports.getBestMask = function getBestMask(data, setupFormatFunc) {
+      const numPatterns = Object.keys(exports.Patterns).length;
+      let bestPattern = 0;
+      let lowerPenalty = Infinity;
+      for (let p = 0; p < numPatterns; p++) {
+        setupFormatFunc(p);
+        exports.applyMask(p, data);
+        const penalty = exports.getPenaltyN1(data) + exports.getPenaltyN2(data) + exports.getPenaltyN3(data) + exports.getPenaltyN4(data);
+        exports.applyMask(p, data);
+        if (penalty < lowerPenalty) {
+          lowerPenalty = penalty;
+          bestPattern = p;
+        }
+      }
+      return bestPattern;
+    };
+  })(maskPattern);
+  return maskPattern;
+}
+var errorCorrectionCode = {};
+var hasRequiredErrorCorrectionCode;
+function requireErrorCorrectionCode() {
+  if (hasRequiredErrorCorrectionCode) return errorCorrectionCode;
+  hasRequiredErrorCorrectionCode = 1;
+  const ECLevel = requireErrorCorrectionLevel();
+  const EC_BLOCKS_TABLE = [
+    // L  M  Q  H
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    1,
+    2,
+    2,
+    4,
+    1,
+    2,
+    4,
+    4,
+    2,
+    4,
+    4,
+    4,
+    2,
+    4,
+    6,
+    5,
+    2,
+    4,
+    6,
+    6,
+    2,
+    5,
+    8,
+    8,
+    4,
+    5,
+    8,
+    8,
+    4,
+    5,
+    8,
+    11,
+    4,
+    8,
+    10,
+    11,
+    4,
+    9,
+    12,
+    16,
+    4,
+    9,
+    16,
+    16,
+    6,
+    10,
+    12,
+    18,
+    6,
+    10,
+    17,
+    16,
+    6,
+    11,
+    16,
+    19,
+    6,
+    13,
+    18,
+    21,
+    7,
+    14,
+    21,
+    25,
+    8,
+    16,
+    20,
+    25,
+    8,
+    17,
+    23,
+    25,
+    9,
+    17,
+    23,
+    34,
+    9,
+    18,
+    25,
+    30,
+    10,
+    20,
+    27,
+    32,
+    12,
+    21,
+    29,
+    35,
+    12,
+    23,
+    34,
+    37,
+    12,
+    25,
+    34,
+    40,
+    13,
+    26,
+    35,
+    42,
+    14,
+    28,
+    38,
+    45,
+    15,
+    29,
+    40,
+    48,
+    16,
+    31,
+    43,
+    51,
+    17,
+    33,
+    45,
+    54,
+    18,
+    35,
+    48,
+    57,
+    19,
+    37,
+    51,
+    60,
+    19,
+    38,
+    53,
+    63,
+    20,
+    40,
+    56,
+    66,
+    21,
+    43,
+    59,
+    70,
+    22,
+    45,
+    62,
+    74,
+    24,
+    47,
+    65,
+    77,
+    25,
+    49,
+    68,
+    81
+  ];
+  const EC_CODEWORDS_TABLE = [
+    // L  M  Q  H
+    7,
+    10,
+    13,
+    17,
+    10,
+    16,
+    22,
+    28,
+    15,
+    26,
+    36,
+    44,
+    20,
+    36,
+    52,
+    64,
+    26,
+    48,
+    72,
+    88,
+    36,
+    64,
+    96,
+    112,
+    40,
+    72,
+    108,
+    130,
+    48,
+    88,
+    132,
+    156,
+    60,
+    110,
+    160,
+    192,
+    72,
+    130,
+    192,
+    224,
+    80,
+    150,
+    224,
+    264,
+    96,
+    176,
+    260,
+    308,
+    104,
+    198,
+    288,
+    352,
+    120,
+    216,
+    320,
+    384,
+    132,
+    240,
+    360,
+    432,
+    144,
+    280,
+    408,
+    480,
+    168,
+    308,
+    448,
+    532,
+    180,
+    338,
+    504,
+    588,
+    196,
+    364,
+    546,
+    650,
+    224,
+    416,
+    600,
+    700,
+    224,
+    442,
+    644,
+    750,
+    252,
+    476,
+    690,
+    816,
+    270,
+    504,
+    750,
+    900,
+    300,
+    560,
+    810,
+    960,
+    312,
+    588,
+    870,
+    1050,
+    336,
+    644,
+    952,
+    1110,
+    360,
+    700,
+    1020,
+    1200,
+    390,
+    728,
+    1050,
+    1260,
+    420,
+    784,
+    1140,
+    1350,
+    450,
+    812,
+    1200,
+    1440,
+    480,
+    868,
+    1290,
+    1530,
+    510,
+    924,
+    1350,
+    1620,
+    540,
+    980,
+    1440,
+    1710,
+    570,
+    1036,
+    1530,
+    1800,
+    570,
+    1064,
+    1590,
+    1890,
+    600,
+    1120,
+    1680,
+    1980,
+    630,
+    1204,
+    1770,
+    2100,
+    660,
+    1260,
+    1860,
+    2220,
+    720,
+    1316,
+    1950,
+    2310,
+    750,
+    1372,
+    2040,
+    2430
+  ];
+  errorCorrectionCode.getBlocksCount = function getBlocksCount(version2, errorCorrectionLevel2) {
+    switch (errorCorrectionLevel2) {
+      case ECLevel.L:
+        return EC_BLOCKS_TABLE[(version2 - 1) * 4 + 0];
+      case ECLevel.M:
+        return EC_BLOCKS_TABLE[(version2 - 1) * 4 + 1];
+      case ECLevel.Q:
+        return EC_BLOCKS_TABLE[(version2 - 1) * 4 + 2];
+      case ECLevel.H:
+        return EC_BLOCKS_TABLE[(version2 - 1) * 4 + 3];
+      default:
+        return void 0;
+    }
+  };
+  errorCorrectionCode.getTotalCodewordsCount = function getTotalCodewordsCount(version2, errorCorrectionLevel2) {
+    switch (errorCorrectionLevel2) {
+      case ECLevel.L:
+        return EC_CODEWORDS_TABLE[(version2 - 1) * 4 + 0];
+      case ECLevel.M:
+        return EC_CODEWORDS_TABLE[(version2 - 1) * 4 + 1];
+      case ECLevel.Q:
+        return EC_CODEWORDS_TABLE[(version2 - 1) * 4 + 2];
+      case ECLevel.H:
+        return EC_CODEWORDS_TABLE[(version2 - 1) * 4 + 3];
+      default:
+        return void 0;
+    }
+  };
+  return errorCorrectionCode;
+}
+var polynomial = {};
+var galoisField = {};
+var hasRequiredGaloisField;
+function requireGaloisField() {
+  if (hasRequiredGaloisField) return galoisField;
+  hasRequiredGaloisField = 1;
+  const EXP_TABLE = new Uint8Array(512);
+  const LOG_TABLE = new Uint8Array(256);
+  (function initTables() {
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      EXP_TABLE[i] = x;
+      LOG_TABLE[x] = i;
+      x <<= 1;
+      if (x & 256) {
+        x ^= 285;
+      }
+    }
+    for (let i = 255; i < 512; i++) {
+      EXP_TABLE[i] = EXP_TABLE[i - 255];
+    }
+  })();
+  galoisField.log = function log2(n) {
+    if (n < 1) throw new Error("log(" + n + ")");
+    return LOG_TABLE[n];
+  };
+  galoisField.exp = function exp(n) {
+    return EXP_TABLE[n];
+  };
+  galoisField.mul = function mul(x, y) {
+    if (x === 0 || y === 0) return 0;
+    return EXP_TABLE[LOG_TABLE[x] + LOG_TABLE[y]];
+  };
+  return galoisField;
+}
+var hasRequiredPolynomial;
+function requirePolynomial() {
+  if (hasRequiredPolynomial) return polynomial;
+  hasRequiredPolynomial = 1;
+  (function(exports) {
+    const GF = requireGaloisField();
+    exports.mul = function mul(p1, p2) {
+      const coeff = new Uint8Array(p1.length + p2.length - 1);
+      for (let i = 0; i < p1.length; i++) {
+        for (let j2 = 0; j2 < p2.length; j2++) {
+          coeff[i + j2] ^= GF.mul(p1[i], p2[j2]);
+        }
+      }
+      return coeff;
+    };
+    exports.mod = function mod(divident, divisor) {
+      let result = new Uint8Array(divident);
+      while (result.length - divisor.length >= 0) {
+        const coeff = result[0];
+        for (let i = 0; i < divisor.length; i++) {
+          result[i] ^= GF.mul(divisor[i], coeff);
+        }
+        let offset = 0;
+        while (offset < result.length && result[offset] === 0) offset++;
+        result = result.slice(offset);
+      }
+      return result;
+    };
+    exports.generateECPolynomial = function generateECPolynomial(degree) {
+      let poly = new Uint8Array([1]);
+      for (let i = 0; i < degree; i++) {
+        poly = exports.mul(poly, new Uint8Array([1, GF.exp(i)]));
+      }
+      return poly;
+    };
+  })(polynomial);
+  return polynomial;
+}
+var reedSolomonEncoder;
+var hasRequiredReedSolomonEncoder;
+function requireReedSolomonEncoder() {
+  if (hasRequiredReedSolomonEncoder) return reedSolomonEncoder;
+  hasRequiredReedSolomonEncoder = 1;
+  const Polynomial = requirePolynomial();
+  function ReedSolomonEncoder(degree) {
+    this.genPoly = void 0;
+    this.degree = degree;
+    if (this.degree) this.initialize(this.degree);
+  }
+  ReedSolomonEncoder.prototype.initialize = function initialize(degree) {
+    this.degree = degree;
+    this.genPoly = Polynomial.generateECPolynomial(this.degree);
+  };
+  ReedSolomonEncoder.prototype.encode = function encode2(data) {
+    if (!this.genPoly) {
+      throw new Error("Encoder not initialized");
+    }
+    const paddedData = new Uint8Array(data.length + this.degree);
+    paddedData.set(data);
+    const remainder = Polynomial.mod(paddedData, this.genPoly);
+    const start = this.degree - remainder.length;
+    if (start > 0) {
+      const buff = new Uint8Array(this.degree);
+      buff.set(remainder, start);
+      return buff;
+    }
+    return remainder;
+  };
+  reedSolomonEncoder = ReedSolomonEncoder;
+  return reedSolomonEncoder;
+}
+var version$1 = {};
+var mode = {};
+var versionCheck = {};
+var hasRequiredVersionCheck;
+function requireVersionCheck() {
+  if (hasRequiredVersionCheck) return versionCheck;
+  hasRequiredVersionCheck = 1;
+  versionCheck.isValid = function isValid(version2) {
+    return !isNaN(version2) && version2 >= 1 && version2 <= 40;
+  };
+  return versionCheck;
+}
+var regex$1 = {};
+var hasRequiredRegex;
+function requireRegex() {
+  if (hasRequiredRegex) return regex$1;
+  hasRequiredRegex = 1;
+  const numeric = "[0-9]+";
+  const alphanumeric = "[A-Z $%*+\\-./:]+";
+  let kanji = "(?:[u3000-u303F]|[u3040-u309F]|[u30A0-u30FF]|[uFF00-uFFEF]|[u4E00-u9FAF]|[u2605-u2606]|[u2190-u2195]|u203B|[u2010u2015u2018u2019u2025u2026u201Cu201Du2225u2260]|[u0391-u0451]|[u00A7u00A8u00B1u00B4u00D7u00F7])+";
+  kanji = kanji.replace(/u/g, "\\u");
+  const byte = "(?:(?![A-Z0-9 $%*+\\-./:]|" + kanji + ")(?:.|[\r\n]))+";
+  regex$1.KANJI = new RegExp(kanji, "g");
+  regex$1.BYTE_KANJI = new RegExp("[^A-Z0-9 $%*+\\-./:]+", "g");
+  regex$1.BYTE = new RegExp(byte, "g");
+  regex$1.NUMERIC = new RegExp(numeric, "g");
+  regex$1.ALPHANUMERIC = new RegExp(alphanumeric, "g");
+  const TEST_KANJI = new RegExp("^" + kanji + "$");
+  const TEST_NUMERIC = new RegExp("^" + numeric + "$");
+  const TEST_ALPHANUMERIC = new RegExp("^[A-Z0-9 $%*+\\-./:]+$");
+  regex$1.testKanji = function testKanji(str) {
+    return TEST_KANJI.test(str);
+  };
+  regex$1.testNumeric = function testNumeric(str) {
+    return TEST_NUMERIC.test(str);
+  };
+  regex$1.testAlphanumeric = function testAlphanumeric(str) {
+    return TEST_ALPHANUMERIC.test(str);
+  };
+  return regex$1;
+}
+var hasRequiredMode;
+function requireMode() {
+  if (hasRequiredMode) return mode;
+  hasRequiredMode = 1;
+  (function(exports) {
+    const VersionCheck = requireVersionCheck();
+    const Regex = requireRegex();
+    exports.NUMERIC = {
+      id: "Numeric",
+      bit: 1 << 0,
+      ccBits: [10, 12, 14]
+    };
+    exports.ALPHANUMERIC = {
+      id: "Alphanumeric",
+      bit: 1 << 1,
+      ccBits: [9, 11, 13]
+    };
+    exports.BYTE = {
+      id: "Byte",
+      bit: 1 << 2,
+      ccBits: [8, 16, 16]
+    };
+    exports.KANJI = {
+      id: "Kanji",
+      bit: 1 << 3,
+      ccBits: [8, 10, 12]
+    };
+    exports.MIXED = {
+      bit: -1
+    };
+    exports.getCharCountIndicator = function getCharCountIndicator(mode2, version2) {
+      if (!mode2.ccBits) throw new Error("Invalid mode: " + mode2);
+      if (!VersionCheck.isValid(version2)) {
+        throw new Error("Invalid version: " + version2);
+      }
+      if (version2 >= 1 && version2 < 10) return mode2.ccBits[0];
+      else if (version2 < 27) return mode2.ccBits[1];
+      return mode2.ccBits[2];
+    };
+    exports.getBestModeForData = function getBestModeForData(dataStr) {
+      if (Regex.testNumeric(dataStr)) return exports.NUMERIC;
+      else if (Regex.testAlphanumeric(dataStr)) return exports.ALPHANUMERIC;
+      else if (Regex.testKanji(dataStr)) return exports.KANJI;
+      else return exports.BYTE;
+    };
+    exports.toString = function toString2(mode2) {
+      if (mode2 && mode2.id) return mode2.id;
+      throw new Error("Invalid mode");
+    };
+    exports.isValid = function isValid(mode2) {
+      return mode2 && mode2.bit && mode2.ccBits;
+    };
+    function fromString(string2) {
+      if (typeof string2 !== "string") {
+        throw new Error("Param is not a string");
+      }
+      const lcStr = string2.toLowerCase();
+      switch (lcStr) {
+        case "numeric":
+          return exports.NUMERIC;
+        case "alphanumeric":
+          return exports.ALPHANUMERIC;
+        case "kanji":
+          return exports.KANJI;
+        case "byte":
+          return exports.BYTE;
+        default:
+          throw new Error("Unknown mode: " + string2);
+      }
+    }
+    exports.from = function from(value, defaultValue) {
+      if (exports.isValid(value)) {
+        return value;
+      }
+      try {
+        return fromString(value);
+      } catch (e) {
+        return defaultValue;
+      }
+    };
+  })(mode);
+  return mode;
+}
+var hasRequiredVersion;
+function requireVersion() {
+  if (hasRequiredVersion) return version$1;
+  hasRequiredVersion = 1;
+  (function(exports) {
+    const Utils = requireUtils$1();
+    const ECCode = requireErrorCorrectionCode();
+    const ECLevel = requireErrorCorrectionLevel();
+    const Mode = requireMode();
+    const VersionCheck = requireVersionCheck();
+    const G18 = 1 << 12 | 1 << 11 | 1 << 10 | 1 << 9 | 1 << 8 | 1 << 5 | 1 << 2 | 1 << 0;
+    const G18_BCH = Utils.getBCHDigit(G18);
+    function getBestVersionForDataLength(mode2, length, errorCorrectionLevel2) {
+      for (let currentVersion = 1; currentVersion <= 40; currentVersion++) {
+        if (length <= exports.getCapacity(currentVersion, errorCorrectionLevel2, mode2)) {
+          return currentVersion;
+        }
+      }
+      return void 0;
+    }
+    function getReservedBitsCount(mode2, version2) {
+      return Mode.getCharCountIndicator(mode2, version2) + 4;
+    }
+    function getTotalBitsFromDataArray(segments2, version2) {
+      let totalBits = 0;
+      segments2.forEach(function(data) {
+        const reservedBits = getReservedBitsCount(data.mode, version2);
+        totalBits += reservedBits + data.getBitsLength();
+      });
+      return totalBits;
+    }
+    function getBestVersionForMixedData(segments2, errorCorrectionLevel2) {
+      for (let currentVersion = 1; currentVersion <= 40; currentVersion++) {
+        const length = getTotalBitsFromDataArray(segments2, currentVersion);
+        if (length <= exports.getCapacity(currentVersion, errorCorrectionLevel2, Mode.MIXED)) {
+          return currentVersion;
+        }
+      }
+      return void 0;
+    }
+    exports.from = function from(value, defaultValue) {
+      if (VersionCheck.isValid(value)) {
+        return parseInt(value, 10);
+      }
+      return defaultValue;
+    };
+    exports.getCapacity = function getCapacity(version2, errorCorrectionLevel2, mode2) {
+      if (!VersionCheck.isValid(version2)) {
+        throw new Error("Invalid QR Code version");
+      }
+      if (typeof mode2 === "undefined") mode2 = Mode.BYTE;
+      const totalCodewords = Utils.getSymbolTotalCodewords(version2);
+      const ecTotalCodewords = ECCode.getTotalCodewordsCount(version2, errorCorrectionLevel2);
+      const dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
+      if (mode2 === Mode.MIXED) return dataTotalCodewordsBits;
+      const usableBits = dataTotalCodewordsBits - getReservedBitsCount(mode2, version2);
+      switch (mode2) {
+        case Mode.NUMERIC:
+          return Math.floor(usableBits / 10 * 3);
+        case Mode.ALPHANUMERIC:
+          return Math.floor(usableBits / 11 * 2);
+        case Mode.KANJI:
+          return Math.floor(usableBits / 13);
+        case Mode.BYTE:
+        default:
+          return Math.floor(usableBits / 8);
+      }
+    };
+    exports.getBestVersionForData = function getBestVersionForData(data, errorCorrectionLevel2) {
+      let seg;
+      const ecl = ECLevel.from(errorCorrectionLevel2, ECLevel.M);
+      if (Array.isArray(data)) {
+        if (data.length > 1) {
+          return getBestVersionForMixedData(data, ecl);
+        }
+        if (data.length === 0) {
+          return 1;
+        }
+        seg = data[0];
+      } else {
+        seg = data;
+      }
+      return getBestVersionForDataLength(seg.mode, seg.getLength(), ecl);
+    };
+    exports.getEncodedBits = function getEncodedBits(version2) {
+      if (!VersionCheck.isValid(version2) || version2 < 7) {
+        throw new Error("Invalid QR Code version");
+      }
+      let d2 = version2 << 12;
+      while (Utils.getBCHDigit(d2) - G18_BCH >= 0) {
+        d2 ^= G18 << Utils.getBCHDigit(d2) - G18_BCH;
+      }
+      return version2 << 12 | d2;
+    };
+  })(version$1);
+  return version$1;
+}
+var formatInfo = {};
+var hasRequiredFormatInfo;
+function requireFormatInfo() {
+  if (hasRequiredFormatInfo) return formatInfo;
+  hasRequiredFormatInfo = 1;
+  const Utils = requireUtils$1();
+  const G15 = 1 << 10 | 1 << 8 | 1 << 5 | 1 << 4 | 1 << 2 | 1 << 1 | 1 << 0;
+  const G15_MASK = 1 << 14 | 1 << 12 | 1 << 10 | 1 << 4 | 1 << 1;
+  const G15_BCH = Utils.getBCHDigit(G15);
+  formatInfo.getEncodedBits = function getEncodedBits(errorCorrectionLevel2, mask) {
+    const data = errorCorrectionLevel2.bit << 3 | mask;
+    let d2 = data << 10;
+    while (Utils.getBCHDigit(d2) - G15_BCH >= 0) {
+      d2 ^= G15 << Utils.getBCHDigit(d2) - G15_BCH;
+    }
+    return (data << 10 | d2) ^ G15_MASK;
+  };
+  return formatInfo;
+}
+var segments = {};
+var numericData;
+var hasRequiredNumericData;
+function requireNumericData() {
+  if (hasRequiredNumericData) return numericData;
+  hasRequiredNumericData = 1;
+  const Mode = requireMode();
+  function NumericData(data) {
+    this.mode = Mode.NUMERIC;
+    this.data = data.toString();
+  }
+  NumericData.getBitsLength = function getBitsLength(length) {
+    return 10 * Math.floor(length / 3) + (length % 3 ? length % 3 * 3 + 1 : 0);
+  };
+  NumericData.prototype.getLength = function getLength() {
+    return this.data.length;
+  };
+  NumericData.prototype.getBitsLength = function getBitsLength() {
+    return NumericData.getBitsLength(this.data.length);
+  };
+  NumericData.prototype.write = function write(bitBuffer2) {
+    let i, group, value;
+    for (i = 0; i + 3 <= this.data.length; i += 3) {
+      group = this.data.substr(i, 3);
+      value = parseInt(group, 10);
+      bitBuffer2.put(value, 10);
+    }
+    const remainingNum = this.data.length - i;
+    if (remainingNum > 0) {
+      group = this.data.substr(i);
+      value = parseInt(group, 10);
+      bitBuffer2.put(value, remainingNum * 3 + 1);
+    }
+  };
+  numericData = NumericData;
+  return numericData;
+}
+var alphanumericData;
+var hasRequiredAlphanumericData;
+function requireAlphanumericData() {
+  if (hasRequiredAlphanumericData) return alphanumericData;
+  hasRequiredAlphanumericData = 1;
+  const Mode = requireMode();
+  const ALPHA_NUM_CHARS = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    " ",
+    "$",
+    "%",
+    "*",
+    "+",
+    "-",
+    ".",
+    "/",
+    ":"
+  ];
+  function AlphanumericData(data) {
+    this.mode = Mode.ALPHANUMERIC;
+    this.data = data;
+  }
+  AlphanumericData.getBitsLength = function getBitsLength(length) {
+    return 11 * Math.floor(length / 2) + 6 * (length % 2);
+  };
+  AlphanumericData.prototype.getLength = function getLength() {
+    return this.data.length;
+  };
+  AlphanumericData.prototype.getBitsLength = function getBitsLength() {
+    return AlphanumericData.getBitsLength(this.data.length);
+  };
+  AlphanumericData.prototype.write = function write(bitBuffer2) {
+    let i;
+    for (i = 0; i + 2 <= this.data.length; i += 2) {
+      let value = ALPHA_NUM_CHARS.indexOf(this.data[i]) * 45;
+      value += ALPHA_NUM_CHARS.indexOf(this.data[i + 1]);
+      bitBuffer2.put(value, 11);
+    }
+    if (this.data.length % 2) {
+      bitBuffer2.put(ALPHA_NUM_CHARS.indexOf(this.data[i]), 6);
+    }
+  };
+  alphanumericData = AlphanumericData;
+  return alphanumericData;
+}
+var byteData;
+var hasRequiredByteData;
+function requireByteData() {
+  if (hasRequiredByteData) return byteData;
+  hasRequiredByteData = 1;
+  const Mode = requireMode();
+  function ByteData(data) {
+    this.mode = Mode.BYTE;
+    if (typeof data === "string") {
+      this.data = new TextEncoder().encode(data);
+    } else {
+      this.data = new Uint8Array(data);
+    }
+  }
+  ByteData.getBitsLength = function getBitsLength(length) {
+    return length * 8;
+  };
+  ByteData.prototype.getLength = function getLength() {
+    return this.data.length;
+  };
+  ByteData.prototype.getBitsLength = function getBitsLength() {
+    return ByteData.getBitsLength(this.data.length);
+  };
+  ByteData.prototype.write = function(bitBuffer2) {
+    for (let i = 0, l = this.data.length; i < l; i++) {
+      bitBuffer2.put(this.data[i], 8);
+    }
+  };
+  byteData = ByteData;
+  return byteData;
+}
+var kanjiData;
+var hasRequiredKanjiData;
+function requireKanjiData() {
+  if (hasRequiredKanjiData) return kanjiData;
+  hasRequiredKanjiData = 1;
+  const Mode = requireMode();
+  const Utils = requireUtils$1();
+  function KanjiData(data) {
+    this.mode = Mode.KANJI;
+    this.data = data;
+  }
+  KanjiData.getBitsLength = function getBitsLength(length) {
+    return length * 13;
+  };
+  KanjiData.prototype.getLength = function getLength() {
+    return this.data.length;
+  };
+  KanjiData.prototype.getBitsLength = function getBitsLength() {
+    return KanjiData.getBitsLength(this.data.length);
+  };
+  KanjiData.prototype.write = function(bitBuffer2) {
+    let i;
+    for (i = 0; i < this.data.length; i++) {
+      let value = Utils.toSJIS(this.data[i]);
+      if (value >= 33088 && value <= 40956) {
+        value -= 33088;
+      } else if (value >= 57408 && value <= 60351) {
+        value -= 49472;
+      } else {
+        throw new Error(
+          "Invalid SJIS character: " + this.data[i] + "\nMake sure your charset is UTF-8"
+        );
+      }
+      value = (value >>> 8 & 255) * 192 + (value & 255);
+      bitBuffer2.put(value, 13);
+    }
+  };
+  kanjiData = KanjiData;
+  return kanjiData;
+}
+var dijkstra = { exports: {} };
+var hasRequiredDijkstra;
+function requireDijkstra() {
+  if (hasRequiredDijkstra) return dijkstra.exports;
+  hasRequiredDijkstra = 1;
+  (function(module) {
+    var dijkstra2 = {
+      single_source_shortest_paths: function(graph, s, d2) {
+        var predecessors = {};
+        var costs = {};
+        costs[s] = 0;
+        var open = dijkstra2.PriorityQueue.make();
+        open.push(s, 0);
+        var closest, u, v2, cost_of_s_to_u, adjacent_nodes, cost_of_e, cost_of_s_to_u_plus_cost_of_e, cost_of_s_to_v, first_visit;
+        while (!open.empty()) {
+          closest = open.pop();
+          u = closest.value;
+          cost_of_s_to_u = closest.cost;
+          adjacent_nodes = graph[u] || {};
+          for (v2 in adjacent_nodes) {
+            if (adjacent_nodes.hasOwnProperty(v2)) {
+              cost_of_e = adjacent_nodes[v2];
+              cost_of_s_to_u_plus_cost_of_e = cost_of_s_to_u + cost_of_e;
+              cost_of_s_to_v = costs[v2];
+              first_visit = typeof costs[v2] === "undefined";
+              if (first_visit || cost_of_s_to_v > cost_of_s_to_u_plus_cost_of_e) {
+                costs[v2] = cost_of_s_to_u_plus_cost_of_e;
+                open.push(v2, cost_of_s_to_u_plus_cost_of_e);
+                predecessors[v2] = u;
+              }
+            }
+          }
+        }
+        if (typeof d2 !== "undefined" && typeof costs[d2] === "undefined") {
+          var msg2 = ["Could not find a path from ", s, " to ", d2, "."].join("");
+          throw new Error(msg2);
+        }
+        return predecessors;
+      },
+      extract_shortest_path_from_predecessor_list: function(predecessors, d2) {
+        var nodes = [];
+        var u = d2;
+        while (u) {
+          nodes.push(u);
+          predecessors[u];
+          u = predecessors[u];
+        }
+        nodes.reverse();
+        return nodes;
+      },
+      find_path: function(graph, s, d2) {
+        var predecessors = dijkstra2.single_source_shortest_paths(graph, s, d2);
+        return dijkstra2.extract_shortest_path_from_predecessor_list(
+          predecessors,
+          d2
+        );
+      },
+      /**
+       * A very naive priority queue implementation.
+       */
+      PriorityQueue: {
+        make: function(opts) {
+          var T = dijkstra2.PriorityQueue, t2 = {}, key;
+          opts = opts || {};
+          for (key in T) {
+            if (T.hasOwnProperty(key)) {
+              t2[key] = T[key];
+            }
+          }
+          t2.queue = [];
+          t2.sorter = opts.sorter || T.default_sorter;
+          return t2;
+        },
+        default_sorter: function(a, b) {
+          return a.cost - b.cost;
+        },
+        /**
+         * Add a new item to the queue and ensure the highest priority element
+         * is at the front of the queue.
+         */
+        push: function(value, cost) {
+          var item2 = { value, cost };
+          this.queue.push(item2);
+          this.queue.sort(this.sorter);
+        },
+        /**
+         * Return the highest priority element in the queue.
+         */
+        pop: function() {
+          return this.queue.shift();
+        },
+        empty: function() {
+          return this.queue.length === 0;
+        }
+      }
+    };
+    {
+      module.exports = dijkstra2;
+    }
+  })(dijkstra);
+  return dijkstra.exports;
+}
+var hasRequiredSegments;
+function requireSegments() {
+  if (hasRequiredSegments) return segments;
+  hasRequiredSegments = 1;
+  (function(exports) {
+    const Mode = requireMode();
+    const NumericData = requireNumericData();
+    const AlphanumericData = requireAlphanumericData();
+    const ByteData = requireByteData();
+    const KanjiData = requireKanjiData();
+    const Regex = requireRegex();
+    const Utils = requireUtils$1();
+    const dijkstra2 = requireDijkstra();
+    function getStringByteLength(str) {
+      return unescape(encodeURIComponent(str)).length;
+    }
+    function getSegments(regex2, mode2, str) {
+      const segments2 = [];
+      let result;
+      while ((result = regex2.exec(str)) !== null) {
+        segments2.push({
+          data: result[0],
+          index: result.index,
+          mode: mode2,
+          length: result[0].length
+        });
+      }
+      return segments2;
+    }
+    function getSegmentsFromString(dataStr) {
+      const numSegs = getSegments(Regex.NUMERIC, Mode.NUMERIC, dataStr);
+      const alphaNumSegs = getSegments(Regex.ALPHANUMERIC, Mode.ALPHANUMERIC, dataStr);
+      let byteSegs;
+      let kanjiSegs;
+      if (Utils.isKanjiModeEnabled()) {
+        byteSegs = getSegments(Regex.BYTE, Mode.BYTE, dataStr);
+        kanjiSegs = getSegments(Regex.KANJI, Mode.KANJI, dataStr);
+      } else {
+        byteSegs = getSegments(Regex.BYTE_KANJI, Mode.BYTE, dataStr);
+        kanjiSegs = [];
+      }
+      const segs = numSegs.concat(alphaNumSegs, byteSegs, kanjiSegs);
+      return segs.sort(function(s1, s2) {
+        return s1.index - s2.index;
+      }).map(function(obj) {
+        return {
+          data: obj.data,
+          mode: obj.mode,
+          length: obj.length
+        };
+      });
+    }
+    function getSegmentBitsLength(length, mode2) {
+      switch (mode2) {
+        case Mode.NUMERIC:
+          return NumericData.getBitsLength(length);
+        case Mode.ALPHANUMERIC:
+          return AlphanumericData.getBitsLength(length);
+        case Mode.KANJI:
+          return KanjiData.getBitsLength(length);
+        case Mode.BYTE:
+          return ByteData.getBitsLength(length);
+      }
+    }
+    function mergeSegments(segs) {
+      return segs.reduce(function(acc, curr) {
+        const prevSeg = acc.length - 1 >= 0 ? acc[acc.length - 1] : null;
+        if (prevSeg && prevSeg.mode === curr.mode) {
+          acc[acc.length - 1].data += curr.data;
+          return acc;
+        }
+        acc.push(curr);
+        return acc;
+      }, []);
+    }
+    function buildNodes(segs) {
+      const nodes = [];
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i];
+        switch (seg.mode) {
+          case Mode.NUMERIC:
+            nodes.push([
+              seg,
+              { data: seg.data, mode: Mode.ALPHANUMERIC, length: seg.length },
+              { data: seg.data, mode: Mode.BYTE, length: seg.length }
+            ]);
+            break;
+          case Mode.ALPHANUMERIC:
+            nodes.push([
+              seg,
+              { data: seg.data, mode: Mode.BYTE, length: seg.length }
+            ]);
+            break;
+          case Mode.KANJI:
+            nodes.push([
+              seg,
+              { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
+            ]);
+            break;
+          case Mode.BYTE:
+            nodes.push([
+              { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
+            ]);
+        }
+      }
+      return nodes;
+    }
+    function buildGraph(nodes, version2) {
+      const table2 = {};
+      const graph = { start: {} };
+      let prevNodeIds = ["start"];
+      for (let i = 0; i < nodes.length; i++) {
+        const nodeGroup = nodes[i];
+        const currentNodeIds = [];
+        for (let j2 = 0; j2 < nodeGroup.length; j2++) {
+          const node2 = nodeGroup[j2];
+          const key = "" + i + j2;
+          currentNodeIds.push(key);
+          table2[key] = { node: node2, lastCount: 0 };
+          graph[key] = {};
+          for (let n = 0; n < prevNodeIds.length; n++) {
+            const prevNodeId = prevNodeIds[n];
+            if (table2[prevNodeId] && table2[prevNodeId].node.mode === node2.mode) {
+              graph[prevNodeId][key] = getSegmentBitsLength(table2[prevNodeId].lastCount + node2.length, node2.mode) - getSegmentBitsLength(table2[prevNodeId].lastCount, node2.mode);
+              table2[prevNodeId].lastCount += node2.length;
+            } else {
+              if (table2[prevNodeId]) table2[prevNodeId].lastCount = node2.length;
+              graph[prevNodeId][key] = getSegmentBitsLength(node2.length, node2.mode) + 4 + Mode.getCharCountIndicator(node2.mode, version2);
+            }
+          }
+        }
+        prevNodeIds = currentNodeIds;
+      }
+      for (let n = 0; n < prevNodeIds.length; n++) {
+        graph[prevNodeIds[n]].end = 0;
+      }
+      return { map: graph, table: table2 };
+    }
+    function buildSingleSegment(data, modesHint) {
+      let mode2;
+      const bestMode = Mode.getBestModeForData(data);
+      mode2 = Mode.from(modesHint, bestMode);
+      if (mode2 !== Mode.BYTE && mode2.bit < bestMode.bit) {
+        throw new Error('"' + data + '" cannot be encoded with mode ' + Mode.toString(mode2) + ".\n Suggested mode is: " + Mode.toString(bestMode));
+      }
+      if (mode2 === Mode.KANJI && !Utils.isKanjiModeEnabled()) {
+        mode2 = Mode.BYTE;
+      }
+      switch (mode2) {
+        case Mode.NUMERIC:
+          return new NumericData(data);
+        case Mode.ALPHANUMERIC:
+          return new AlphanumericData(data);
+        case Mode.KANJI:
+          return new KanjiData(data);
+        case Mode.BYTE:
+          return new ByteData(data);
+      }
+    }
+    exports.fromArray = function fromArray(array) {
+      return array.reduce(function(acc, seg) {
+        if (typeof seg === "string") {
+          acc.push(buildSingleSegment(seg, null));
+        } else if (seg.data) {
+          acc.push(buildSingleSegment(seg.data, seg.mode));
+        }
+        return acc;
+      }, []);
+    };
+    exports.fromString = function fromString(data, version2) {
+      const segs = getSegmentsFromString(data, Utils.isKanjiModeEnabled());
+      const nodes = buildNodes(segs);
+      const graph = buildGraph(nodes, version2);
+      const path2 = dijkstra2.find_path(graph.map, "start", "end");
+      const optimizedSegs = [];
+      for (let i = 1; i < path2.length - 1; i++) {
+        optimizedSegs.push(graph.table[path2[i]].node);
+      }
+      return exports.fromArray(mergeSegments(optimizedSegs));
+    };
+    exports.rawSplit = function rawSplit(data) {
+      return exports.fromArray(
+        getSegmentsFromString(data, Utils.isKanjiModeEnabled())
+      );
+    };
+  })(segments);
+  return segments;
+}
+var hasRequiredQrcode;
+function requireQrcode() {
+  if (hasRequiredQrcode) return qrcode;
+  hasRequiredQrcode = 1;
+  const Utils = requireUtils$1();
+  const ECLevel = requireErrorCorrectionLevel();
+  const BitBuffer = requireBitBuffer();
+  const BitMatrix = requireBitMatrix();
+  const AlignmentPattern = requireAlignmentPattern();
+  const FinderPattern = requireFinderPattern();
+  const MaskPattern = requireMaskPattern();
+  const ECCode = requireErrorCorrectionCode();
+  const ReedSolomonEncoder = requireReedSolomonEncoder();
+  const Version = requireVersion();
+  const FormatInfo = requireFormatInfo();
+  const Mode = requireMode();
+  const Segments = requireSegments();
+  function setupFinderPattern(matrix, version2) {
+    const size = matrix.size;
+    const pos = FinderPattern.getPositions(version2);
+    for (let i = 0; i < pos.length; i++) {
+      const row2 = pos[i][0];
+      const col = pos[i][1];
+      for (let r2 = -1; r2 <= 7; r2++) {
+        if (row2 + r2 <= -1 || size <= row2 + r2) continue;
+        for (let c2 = -1; c2 <= 7; c2++) {
+          if (col + c2 <= -1 || size <= col + c2) continue;
+          if (r2 >= 0 && r2 <= 6 && (c2 === 0 || c2 === 6) || c2 >= 0 && c2 <= 6 && (r2 === 0 || r2 === 6) || r2 >= 2 && r2 <= 4 && c2 >= 2 && c2 <= 4) {
+            matrix.set(row2 + r2, col + c2, true, true);
+          } else {
+            matrix.set(row2 + r2, col + c2, false, true);
+          }
+        }
+      }
+    }
+  }
+  function setupTimingPattern(matrix) {
+    const size = matrix.size;
+    for (let r2 = 8; r2 < size - 8; r2++) {
+      const value = r2 % 2 === 0;
+      matrix.set(r2, 6, value, true);
+      matrix.set(6, r2, value, true);
+    }
+  }
+  function setupAlignmentPattern(matrix, version2) {
+    const pos = AlignmentPattern.getPositions(version2);
+    for (let i = 0; i < pos.length; i++) {
+      const row2 = pos[i][0];
+      const col = pos[i][1];
+      for (let r2 = -2; r2 <= 2; r2++) {
+        for (let c2 = -2; c2 <= 2; c2++) {
+          if (r2 === -2 || r2 === 2 || c2 === -2 || c2 === 2 || r2 === 0 && c2 === 0) {
+            matrix.set(row2 + r2, col + c2, true, true);
+          } else {
+            matrix.set(row2 + r2, col + c2, false, true);
+          }
+        }
+      }
+    }
+  }
+  function setupVersionInfo(matrix, version2) {
+    const size = matrix.size;
+    const bits = Version.getEncodedBits(version2);
+    let row2, col, mod;
+    for (let i = 0; i < 18; i++) {
+      row2 = Math.floor(i / 3);
+      col = i % 3 + size - 8 - 3;
+      mod = (bits >> i & 1) === 1;
+      matrix.set(row2, col, mod, true);
+      matrix.set(col, row2, mod, true);
+    }
+  }
+  function setupFormatInfo(matrix, errorCorrectionLevel2, maskPattern2) {
+    const size = matrix.size;
+    const bits = FormatInfo.getEncodedBits(errorCorrectionLevel2, maskPattern2);
+    let i, mod;
+    for (i = 0; i < 15; i++) {
+      mod = (bits >> i & 1) === 1;
+      if (i < 6) {
+        matrix.set(i, 8, mod, true);
+      } else if (i < 8) {
+        matrix.set(i + 1, 8, mod, true);
+      } else {
+        matrix.set(size - 15 + i, 8, mod, true);
+      }
+      if (i < 8) {
+        matrix.set(8, size - i - 1, mod, true);
+      } else if (i < 9) {
+        matrix.set(8, 15 - i - 1 + 1, mod, true);
+      } else {
+        matrix.set(8, 15 - i - 1, mod, true);
+      }
+    }
+    matrix.set(size - 8, 8, 1, true);
+  }
+  function setupData(matrix, data) {
+    const size = matrix.size;
+    let inc = -1;
+    let row2 = size - 1;
+    let bitIndex = 7;
+    let byteIndex = 0;
+    for (let col = size - 1; col > 0; col -= 2) {
+      if (col === 6) col--;
+      while (true) {
+        for (let c2 = 0; c2 < 2; c2++) {
+          if (!matrix.isReserved(row2, col - c2)) {
+            let dark = false;
+            if (byteIndex < data.length) {
+              dark = (data[byteIndex] >>> bitIndex & 1) === 1;
+            }
+            matrix.set(row2, col - c2, dark);
+            bitIndex--;
+            if (bitIndex === -1) {
+              byteIndex++;
+              bitIndex = 7;
+            }
+          }
+        }
+        row2 += inc;
+        if (row2 < 0 || size <= row2) {
+          row2 -= inc;
+          inc = -inc;
+          break;
+        }
+      }
+    }
+  }
+  function createData(version2, errorCorrectionLevel2, segments2) {
+    const buffer = new BitBuffer();
+    segments2.forEach(function(data) {
+      buffer.put(data.mode.bit, 4);
+      buffer.put(data.getLength(), Mode.getCharCountIndicator(data.mode, version2));
+      data.write(buffer);
+    });
+    const totalCodewords = Utils.getSymbolTotalCodewords(version2);
+    const ecTotalCodewords = ECCode.getTotalCodewordsCount(version2, errorCorrectionLevel2);
+    const dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
+    if (buffer.getLengthInBits() + 4 <= dataTotalCodewordsBits) {
+      buffer.put(0, 4);
+    }
+    while (buffer.getLengthInBits() % 8 !== 0) {
+      buffer.putBit(0);
+    }
+    const remainingByte = (dataTotalCodewordsBits - buffer.getLengthInBits()) / 8;
+    for (let i = 0; i < remainingByte; i++) {
+      buffer.put(i % 2 ? 17 : 236, 8);
+    }
+    return createCodewords(buffer, version2, errorCorrectionLevel2);
+  }
+  function createCodewords(bitBuffer2, version2, errorCorrectionLevel2) {
+    const totalCodewords = Utils.getSymbolTotalCodewords(version2);
+    const ecTotalCodewords = ECCode.getTotalCodewordsCount(version2, errorCorrectionLevel2);
+    const dataTotalCodewords = totalCodewords - ecTotalCodewords;
+    const ecTotalBlocks = ECCode.getBlocksCount(version2, errorCorrectionLevel2);
+    const blocksInGroup2 = totalCodewords % ecTotalBlocks;
+    const blocksInGroup1 = ecTotalBlocks - blocksInGroup2;
+    const totalCodewordsInGroup1 = Math.floor(totalCodewords / ecTotalBlocks);
+    const dataCodewordsInGroup1 = Math.floor(dataTotalCodewords / ecTotalBlocks);
+    const dataCodewordsInGroup2 = dataCodewordsInGroup1 + 1;
+    const ecCount = totalCodewordsInGroup1 - dataCodewordsInGroup1;
+    const rs = new ReedSolomonEncoder(ecCount);
+    let offset = 0;
+    const dcData = new Array(ecTotalBlocks);
+    const ecData = new Array(ecTotalBlocks);
+    let maxDataSize = 0;
+    const buffer = new Uint8Array(bitBuffer2.buffer);
+    for (let b = 0; b < ecTotalBlocks; b++) {
+      const dataSize = b < blocksInGroup1 ? dataCodewordsInGroup1 : dataCodewordsInGroup2;
+      dcData[b] = buffer.slice(offset, offset + dataSize);
+      ecData[b] = rs.encode(dcData[b]);
+      offset += dataSize;
+      maxDataSize = Math.max(maxDataSize, dataSize);
+    }
+    const data = new Uint8Array(totalCodewords);
+    let index2 = 0;
+    let i, r2;
+    for (i = 0; i < maxDataSize; i++) {
+      for (r2 = 0; r2 < ecTotalBlocks; r2++) {
+        if (i < dcData[r2].length) {
+          data[index2++] = dcData[r2][i];
+        }
+      }
+    }
+    for (i = 0; i < ecCount; i++) {
+      for (r2 = 0; r2 < ecTotalBlocks; r2++) {
+        data[index2++] = ecData[r2][i];
+      }
+    }
+    return data;
+  }
+  function createSymbol(data, version2, errorCorrectionLevel2, maskPattern2) {
+    let segments2;
+    if (Array.isArray(data)) {
+      segments2 = Segments.fromArray(data);
+    } else if (typeof data === "string") {
+      let estimatedVersion = version2;
+      if (!estimatedVersion) {
+        const rawSegments = Segments.rawSplit(data);
+        estimatedVersion = Version.getBestVersionForData(rawSegments, errorCorrectionLevel2);
+      }
+      segments2 = Segments.fromString(data, estimatedVersion || 40);
+    } else {
+      throw new Error("Invalid data");
+    }
+    const bestVersion = Version.getBestVersionForData(segments2, errorCorrectionLevel2);
+    if (!bestVersion) {
+      throw new Error("The amount of data is too big to be stored in a QR Code");
+    }
+    if (!version2) {
+      version2 = bestVersion;
+    } else if (version2 < bestVersion) {
+      throw new Error(
+        "\nThe chosen QR Code version cannot contain this amount of data.\nMinimum version required to store current data is: " + bestVersion + ".\n"
+      );
+    }
+    const dataBits = createData(version2, errorCorrectionLevel2, segments2);
+    const moduleCount = Utils.getSymbolSize(version2);
+    const modules = new BitMatrix(moduleCount);
+    setupFinderPattern(modules, version2);
+    setupTimingPattern(modules);
+    setupAlignmentPattern(modules, version2);
+    setupFormatInfo(modules, errorCorrectionLevel2, 0);
+    if (version2 >= 7) {
+      setupVersionInfo(modules, version2);
+    }
+    setupData(modules, dataBits);
+    if (isNaN(maskPattern2)) {
+      maskPattern2 = MaskPattern.getBestMask(
+        modules,
+        setupFormatInfo.bind(null, modules, errorCorrectionLevel2)
+      );
+    }
+    MaskPattern.applyMask(maskPattern2, modules);
+    setupFormatInfo(modules, errorCorrectionLevel2, maskPattern2);
+    return {
+      modules,
+      version: version2,
+      errorCorrectionLevel: errorCorrectionLevel2,
+      maskPattern: maskPattern2,
+      segments: segments2
+    };
+  }
+  qrcode.create = function create2(data, options) {
+    if (typeof data === "undefined" || data === "") {
+      throw new Error("No input text");
+    }
+    let errorCorrectionLevel2 = ECLevel.M;
+    let version2;
+    let mask;
+    if (typeof options !== "undefined") {
+      errorCorrectionLevel2 = ECLevel.from(options.errorCorrectionLevel, ECLevel.M);
+      version2 = Version.from(options.version);
+      mask = MaskPattern.from(options.maskPattern);
+      if (options.toSJISFunc) {
+        Utils.setToSJISFunction(options.toSJISFunc);
+      }
+    }
+    return createSymbol(data, version2, errorCorrectionLevel2, mask);
+  };
+  return qrcode;
+}
+var canvas = {};
+var utils = {};
+var hasRequiredUtils;
+function requireUtils() {
+  if (hasRequiredUtils) return utils;
+  hasRequiredUtils = 1;
+  (function(exports) {
+    function hex2rgba(hex) {
+      if (typeof hex === "number") {
+        hex = hex.toString();
+      }
+      if (typeof hex !== "string") {
+        throw new Error("Color should be defined as hex string");
+      }
+      let hexCode = hex.slice().replace("#", "").split("");
+      if (hexCode.length < 3 || hexCode.length === 5 || hexCode.length > 8) {
+        throw new Error("Invalid hex color: " + hex);
+      }
+      if (hexCode.length === 3 || hexCode.length === 4) {
+        hexCode = Array.prototype.concat.apply([], hexCode.map(function(c2) {
+          return [c2, c2];
+        }));
+      }
+      if (hexCode.length === 6) hexCode.push("F", "F");
+      const hexValue = parseInt(hexCode.join(""), 16);
+      return {
+        r: hexValue >> 24 & 255,
+        g: hexValue >> 16 & 255,
+        b: hexValue >> 8 & 255,
+        a: hexValue & 255,
+        hex: "#" + hexCode.slice(0, 6).join("")
+      };
+    }
+    exports.getOptions = function getOptions(options) {
+      if (!options) options = {};
+      if (!options.color) options.color = {};
+      const margin = typeof options.margin === "undefined" || options.margin === null || options.margin < 0 ? 4 : options.margin;
+      const width = options.width && options.width >= 21 ? options.width : void 0;
+      const scale = options.scale || 4;
+      return {
+        width,
+        scale: width ? 4 : scale,
+        margin,
+        color: {
+          dark: hex2rgba(options.color.dark || "#000000ff"),
+          light: hex2rgba(options.color.light || "#ffffffff")
+        },
+        type: options.type,
+        rendererOpts: options.rendererOpts || {}
+      };
+    };
+    exports.getScale = function getScale(qrSize, opts) {
+      return opts.width && opts.width >= qrSize + opts.margin * 2 ? opts.width / (qrSize + opts.margin * 2) : opts.scale;
+    };
+    exports.getImageWidth = function getImageWidth(qrSize, opts) {
+      const scale = exports.getScale(qrSize, opts);
+      return Math.floor((qrSize + opts.margin * 2) * scale);
+    };
+    exports.qrToImageData = function qrToImageData(imgData, qr, opts) {
+      const size = qr.modules.size;
+      const data = qr.modules.data;
+      const scale = exports.getScale(size, opts);
+      const symbolSize = Math.floor((size + opts.margin * 2) * scale);
+      const scaledMargin = opts.margin * scale;
+      const palette = [opts.color.light, opts.color.dark];
+      for (let i = 0; i < symbolSize; i++) {
+        for (let j2 = 0; j2 < symbolSize; j2++) {
+          let posDst = (i * symbolSize + j2) * 4;
+          let pxColor = opts.color.light;
+          if (i >= scaledMargin && j2 >= scaledMargin && i < symbolSize - scaledMargin && j2 < symbolSize - scaledMargin) {
+            const iSrc = Math.floor((i - scaledMargin) / scale);
+            const jSrc = Math.floor((j2 - scaledMargin) / scale);
+            pxColor = palette[data[iSrc * size + jSrc] ? 1 : 0];
+          }
+          imgData[posDst++] = pxColor.r;
+          imgData[posDst++] = pxColor.g;
+          imgData[posDst++] = pxColor.b;
+          imgData[posDst] = pxColor.a;
+        }
+      }
+    };
+  })(utils);
+  return utils;
+}
+var hasRequiredCanvas;
+function requireCanvas() {
+  if (hasRequiredCanvas) return canvas;
+  hasRequiredCanvas = 1;
+  (function(exports) {
+    const Utils = requireUtils();
+    function clearCanvas(ctx, canvas2, size) {
+      ctx.clearRect(0, 0, canvas2.width, canvas2.height);
+      if (!canvas2.style) canvas2.style = {};
+      canvas2.height = size;
+      canvas2.width = size;
+      canvas2.style.height = size + "px";
+      canvas2.style.width = size + "px";
+    }
+    function getCanvasElement() {
+      try {
+        return document.createElement("canvas");
+      } catch (e) {
+        throw new Error("You need to specify a canvas element");
+      }
+    }
+    exports.render = function render(qrData, canvas2, options) {
+      let opts = options;
+      let canvasEl = canvas2;
+      if (typeof opts === "undefined" && (!canvas2 || !canvas2.getContext)) {
+        opts = canvas2;
+        canvas2 = void 0;
+      }
+      if (!canvas2) {
+        canvasEl = getCanvasElement();
+      }
+      opts = Utils.getOptions(opts);
+      const size = Utils.getImageWidth(qrData.modules.size, opts);
+      const ctx = canvasEl.getContext("2d");
+      const image2 = ctx.createImageData(size, size);
+      Utils.qrToImageData(image2.data, qrData, opts);
+      clearCanvas(ctx, canvasEl, size);
+      ctx.putImageData(image2, 0, 0);
+      return canvasEl;
+    };
+    exports.renderToDataURL = function renderToDataURL(qrData, canvas2, options) {
+      let opts = options;
+      if (typeof opts === "undefined" && (!canvas2 || !canvas2.getContext)) {
+        opts = canvas2;
+        canvas2 = void 0;
+      }
+      if (!opts) opts = {};
+      const canvasEl = exports.render(qrData, canvas2, opts);
+      const type = opts.type || "image/png";
+      const rendererOpts = opts.rendererOpts || {};
+      return canvasEl.toDataURL(type, rendererOpts.quality);
+    };
+  })(canvas);
+  return canvas;
+}
+var svgTag = {};
+var hasRequiredSvgTag;
+function requireSvgTag() {
+  if (hasRequiredSvgTag) return svgTag;
+  hasRequiredSvgTag = 1;
+  const Utils = requireUtils();
+  function getColorAttrib(color2, attrib) {
+    const alpha = color2.a / 255;
+    const str = attrib + '="' + color2.hex + '"';
+    return alpha < 1 ? str + " " + attrib + '-opacity="' + alpha.toFixed(2).slice(1) + '"' : str;
+  }
+  function svgCmd(cmd, x, y) {
+    let str = cmd + x;
+    if (typeof y !== "undefined") str += " " + y;
+    return str;
+  }
+  function qrToPath(data, size, margin) {
+    let path2 = "";
+    let moveBy = 0;
+    let newRow = false;
+    let lineLength = 0;
+    for (let i = 0; i < data.length; i++) {
+      const col = Math.floor(i % size);
+      const row2 = Math.floor(i / size);
+      if (!col && !newRow) newRow = true;
+      if (data[i]) {
+        lineLength++;
+        if (!(i > 0 && col > 0 && data[i - 1])) {
+          path2 += newRow ? svgCmd("M", col + margin, 0.5 + row2 + margin) : svgCmd("m", moveBy, 0);
+          moveBy = 0;
+          newRow = false;
+        }
+        if (!(col + 1 < size && data[i + 1])) {
+          path2 += svgCmd("h", lineLength);
+          lineLength = 0;
+        }
+      } else {
+        moveBy++;
+      }
+    }
+    return path2;
+  }
+  svgTag.render = function render(qrData, options, cb) {
+    const opts = Utils.getOptions(options);
+    const size = qrData.modules.size;
+    const data = qrData.modules.data;
+    const qrcodesize = size + opts.margin * 2;
+    const bg = !opts.color.light.a ? "" : "<path " + getColorAttrib(opts.color.light, "fill") + ' d="M0 0h' + qrcodesize + "v" + qrcodesize + 'H0z"/>';
+    const path2 = "<path " + getColorAttrib(opts.color.dark, "stroke") + ' d="' + qrToPath(data, size, opts.margin) + '"/>';
+    const viewBox = 'viewBox="0 0 ' + qrcodesize + " " + qrcodesize + '"';
+    const width = !opts.width ? "" : 'width="' + opts.width + '" height="' + opts.width + '" ';
+    const svgTag2 = '<svg xmlns="http://www.w3.org/2000/svg" ' + width + viewBox + ' shape-rendering="crispEdges">' + bg + path2 + "</svg>\n";
+    if (typeof cb === "function") {
+      cb(null, svgTag2);
+    }
+    return svgTag2;
+  };
+  return svgTag;
+}
+var hasRequiredBrowser;
+function requireBrowser() {
+  if (hasRequiredBrowser) return browser;
+  hasRequiredBrowser = 1;
+  const canPromise2 = requireCanPromise();
+  const QRCode2 = requireQrcode();
+  const CanvasRenderer = requireCanvas();
+  const SvgRenderer = requireSvgTag();
+  function renderCanvas(renderFunc, canvas2, text2, opts, cb) {
+    const args = [].slice.call(arguments, 1);
+    const argsNum = args.length;
+    const isLastArgCb = typeof args[argsNum - 1] === "function";
+    if (!isLastArgCb && !canPromise2()) {
+      throw new Error("Callback required as last argument");
+    }
+    if (isLastArgCb) {
+      if (argsNum < 2) {
+        throw new Error("Too few arguments provided");
+      }
+      if (argsNum === 2) {
+        cb = text2;
+        text2 = canvas2;
+        canvas2 = opts = void 0;
+      } else if (argsNum === 3) {
+        if (canvas2.getContext && typeof cb === "undefined") {
+          cb = opts;
+          opts = void 0;
+        } else {
+          cb = opts;
+          opts = text2;
+          text2 = canvas2;
+          canvas2 = void 0;
+        }
+      }
+    } else {
+      if (argsNum < 1) {
+        throw new Error("Too few arguments provided");
+      }
+      if (argsNum === 1) {
+        text2 = canvas2;
+        canvas2 = opts = void 0;
+      } else if (argsNum === 2 && !canvas2.getContext) {
+        opts = text2;
+        text2 = canvas2;
+        canvas2 = void 0;
+      }
+      return new Promise(function(resolve, reject) {
+        try {
+          const data = QRCode2.create(text2, opts);
+          resolve(renderFunc(data, canvas2, opts));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }
+    try {
+      const data = QRCode2.create(text2, opts);
+      cb(null, renderFunc(data, canvas2, opts));
+    } catch (e) {
+      cb(e);
+    }
+  }
+  browser.create = QRCode2.create;
+  browser.toCanvas = renderCanvas.bind(null, CanvasRenderer.render);
+  browser.toDataURL = renderCanvas.bind(null, CanvasRenderer.renderToDataURL);
+  browser.toString = renderCanvas.bind(null, function(data, _2, opts) {
+    return SvgRenderer.render(data, opts);
+  });
+  return browser;
+}
+var browserExports = requireBrowser();
+const QRCode = /* @__PURE__ */ getDefaultExportFromCjs(browserExports);
+const overlay$5 = "_overlay_1vpgs_1";
+const panel$2 = "_panel_1vpgs_21";
+const header$6 = "_header_1vpgs_43";
 const closeBtn$4 = "_closeBtn_1vpgs_63";
 const preview = "_preview_1vpgs_95";
 const previewImg = "_previewImg_1vpgs_113";
@@ -9615,13 +11726,13 @@ const fileNameRow = "_fileNameRow_1vpgs_191";
 const fileNameLabel = "_fileNameLabel_1vpgs_203";
 const fileNameInput = "_fileNameInput_1vpgs_215";
 const savedNote = "_savedNote_1vpgs_235";
-const actions = "_actions_1vpgs_261";
+const actions$1 = "_actions_1vpgs_261";
 const cancelBtn = "_cancelBtn_1vpgs_273";
-const saveBtn$2 = "_saveBtn_1vpgs_299";
-const styles$f = {
-  overlay: overlay$4,
-  panel: panel$1,
-  header: header$4,
+const saveBtn$1 = "_saveBtn_1vpgs_299";
+const styles$j = {
+  overlay: overlay$5,
+  panel: panel$2,
+  header: header$6,
   closeBtn: closeBtn$4,
   preview,
   previewImg,
@@ -9634,9 +11745,9 @@ const styles$f = {
   fileNameLabel,
   fileNameInput,
   savedNote,
-  actions,
+  actions: actions$1,
   cancelBtn,
-  saveBtn: saveBtn$2
+  saveBtn: saveBtn$1
 };
 function CapturePanel({ data, mimeType, filename, appDir, onClose }) {
   const t2 = useT();
@@ -9663,16 +11774,16 @@ function CapturePanel({ data, mimeType, filename, appDir, onClose }) {
       setSaving(false);
     }
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$f.overlay, onClick: (e) => e.target === e.currentTarget && onClose(), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.panel, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.header, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.overlay, onClick: (e) => e.target === e.currentTarget && onClose(), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.panel, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.header, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isImage ? t2("capture.saveImage") : t2("capture.saveVideo") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$f.closeBtn, onClick: onClose, children: "✕" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$j.closeBtn, onClick: onClose, children: "✕" })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$f.preview, children: isImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: data, alt: t2("capture.previewAlt"), className: styles$f.previewImg }) : /* @__PURE__ */ jsxRuntimeExports.jsx("video", { src: data, controls: true, className: styles$f.previewVideo }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.body, children: [
-      isImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.roleGroup, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$f.roleLabel, children: t2("capture.purpose") }),
-        ["cover", "carousel", "logo", "none"].map((r2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: styles$f.roleOption, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$j.preview, children: isImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: data, alt: t2("capture.previewAlt"), className: styles$j.previewImg }) : /* @__PURE__ */ jsxRuntimeExports.jsx("video", { src: data, controls: true, className: styles$j.previewVideo }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.body, children: [
+      isImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.roleGroup, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.roleLabel, children: t2("capture.purpose") }),
+        ["cover", "carousel", "logo", "none"].map((r2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: styles$j.roleOption, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "input",
             {
@@ -9686,26 +11797,26 @@ function CapturePanel({ data, mimeType, filename, appDir, onClose }) {
           r2 === "cover" ? t2("capture.cover") : r2 === "carousel" ? t2("capture.carousel") : r2 === "logo" ? t2("capture.logo") : t2("capture.custom")
         ] }, r2))
       ] }),
-      role === "none" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.fileNameRow, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$f.fileNameLabel, children: t2("capture.filename") }),
+      role === "none" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.fileNameRow, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$j.fileNameLabel, children: t2("capture.filename") }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
           {
-            className: styles$f.fileNameInput,
+            className: styles$j.fileNameInput,
             value: customName,
             onChange: (e) => setCustomName(e.target.value)
           }
         )
       ] }),
-      savedPath ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.savedNote, children: [
+      savedPath ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.savedNote, children: [
         t2("capture.savedAt"),
         /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: savedPath })
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.actions, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$f.cancelBtn, onClick: onClose, children: t2("common.cancel") }),
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$j.actions, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$j.cancelBtn, onClick: onClose, children: t2("common.cancel") }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            className: styles$f.saveBtn,
+            className: styles$j.saveBtn,
             onClick: handleSave,
             disabled: saving,
             children: saving ? t2("common.saving") : t2("common.save")
@@ -9715,46 +11826,69 @@ function CapturePanel({ data, mimeType, filename, appDir, onClose }) {
     ] })
   ] }) });
 }
-const root$8 = "_root_74qrn_1";
-const toolbar$4 = "_toolbar_74qrn_21";
-const toolGroup = "_toolGroup_74qrn_45";
-const toolDivider = "_toolDivider_74qrn_59";
-const select$2 = "_select_74qrn_77";
-const dimensionLabel = "_dimensionLabel_74qrn_101";
-const segmented = "_segmented_74qrn_117";
-const segBtn = "_segBtn_74qrn_137";
-const segBtnActive = "_segBtnActive_74qrn_159";
-const segBtnAdminActive = "_segBtnAdminActive_74qrn_169";
-const urlText = "_urlText_74qrn_225";
-const copiedBadge = "_copiedBadge_74qrn_227";
-const toolBtn = "_toolBtn_74qrn_245";
-const toolBtnLabel = "_toolBtnLabel_74qrn_277";
-const toolBtnRecording = "_toolBtnRecording_74qrn_281";
-const warnings = "_warnings_74qrn_297";
-const previewOuter = "_previewOuter_74qrn_317";
-const leftStrip = "_leftStrip_74qrn_331";
-const leftStripBtn = "_leftStripBtn_74qrn_353";
-const leftStripSep = "_leftStripSep_74qrn_377";
-const previewArea = "_previewArea_74qrn_393";
-const previewAreaDesktop = "_previewAreaDesktop_74qrn_413";
-const desktopFrame = "_desktopFrame_74qrn_425";
-const phoneFrameWrapper = "_phoneFrameWrapper_74qrn_447";
-const phoneBezel = "_phoneBezel_74qrn_459";
-const dynamicIsland = "_dynamicIsland_74qrn_489";
-const phoneStatus = "_phoneStatus_74qrn_509";
-const statusTime = "_statusTime_74qrn_541";
-const statusIcons = "_statusIcons_74qrn_553";
-const iframeWrapper = "_iframeWrapper_74qrn_569";
-const iframe = "_iframe_74qrn_569";
-const homeIndicator = "_homeIndicator_74qrn_593";
-const adminBadge = "_adminBadge_74qrn_641";
-const empty$5 = "_empty_74qrn_671";
-const styles$e = {
-  root: root$8,
+function formatLogTime(ts2) {
+  const d2 = new Date(ts2);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d2.getHours())}:${pad(d2.getMinutes())}:${pad(d2.getSeconds())}`;
+}
+function localFilenameTimestamp() {
+  const d2 = /* @__PURE__ */ new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d2.getFullYear()}-${pad(d2.getMonth() + 1)}-${pad(d2.getDate())}T${pad(d2.getHours())}-${pad(d2.getMinutes())}-${pad(d2.getSeconds())}`;
+}
+function currentTimeHHMM() {
+  const d2 = /* @__PURE__ */ new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d2.getHours())}:${pad(d2.getMinutes())}`;
+}
+const root$9 = "_root_1k22u_1";
+const toolbar$4 = "_toolbar_1k22u_21";
+const toolGroup = "_toolGroup_1k22u_45";
+const toolDivider = "_toolDivider_1k22u_59";
+const select$1 = "_select_1k22u_77";
+const dimensionLabel = "_dimensionLabel_1k22u_101";
+const segmented = "_segmented_1k22u_117";
+const segBtn = "_segBtn_1k22u_137";
+const segBtnActive = "_segBtnActive_1k22u_159";
+const segBtnAdminActive = "_segBtnAdminActive_1k22u_169";
+const urlText = "_urlText_1k22u_225";
+const copiedBadge = "_copiedBadge_1k22u_227";
+const toolBtn = "_toolBtn_1k22u_245";
+const toolBtnLabel = "_toolBtnLabel_1k22u_277";
+const toolBtnRecording = "_toolBtnRecording_1k22u_281";
+const previewOuter = "_previewOuter_1k22u_317";
+const leftStrip = "_leftStrip_1k22u_331";
+const leftStripBtn = "_leftStripBtn_1k22u_353";
+const leftStripSep = "_leftStripSep_1k22u_377";
+const previewArea$1 = "_previewArea_1k22u_393";
+const previewAreaDesktop = "_previewAreaDesktop_1k22u_413";
+const desktopFrame = "_desktopFrame_1k22u_425";
+const phoneFrameWrapper = "_phoneFrameWrapper_1k22u_447";
+const phoneBezel = "_phoneBezel_1k22u_459";
+const dynamicIsland = "_dynamicIsland_1k22u_489";
+const phoneStatus = "_phoneStatus_1k22u_509";
+const statusTime = "_statusTime_1k22u_541";
+const statusIcons = "_statusIcons_1k22u_553";
+const iframeWrapper = "_iframeWrapper_1k22u_569";
+const iframe = "_iframe_1k22u_569";
+const homeIndicator = "_homeIndicator_1k22u_593";
+const adminBadge = "_adminBadge_1k22u_641";
+const empty$8 = "_empty_1k22u_671";
+const qrOverlay = "_qrOverlay_1k22u_953";
+const qrModal = "_qrModal_1k22u_973";
+const qrModalHeader = "_qrModalHeader_1k22u_999";
+const qrModalTitle = "_qrModalTitle_1k22u_1013";
+const qrCloseBtn = "_qrCloseBtn_1k22u_1025";
+const qrImage = "_qrImage_1k22u_1051";
+const qrUrl = "_qrUrl_1k22u_1065";
+const qrTip = "_qrTip_1k22u_1081";
+const qrNoIp = "_qrNoIp_1k22u_1097";
+const styles$i = {
+  root: root$9,
   toolbar: toolbar$4,
   toolGroup,
   toolDivider,
-  select: select$2,
+  select: select$1,
   dimensionLabel,
   segmented,
   segBtn,
@@ -9765,12 +11899,11 @@ const styles$e = {
   toolBtn,
   toolBtnLabel,
   toolBtnRecording,
-  warnings,
   previewOuter,
   leftStrip,
   leftStripBtn,
   leftStripSep,
-  previewArea,
+  previewArea: previewArea$1,
   previewAreaDesktop,
   desktopFrame,
   phoneFrameWrapper,
@@ -9783,7 +11916,16 @@ const styles$e = {
   iframe,
   homeIndicator,
   adminBadge,
-  empty: empty$5
+  empty: empty$8,
+  qrOverlay,
+  qrModal,
+  qrModalHeader,
+  qrModalTitle,
+  qrCloseBtn,
+  qrImage,
+  qrUrl,
+  qrTip,
+  qrNoIp
 };
 const DEVICES = [
   // ── iOS ──────────────────────────────────────────────
@@ -9847,6 +11989,9 @@ function PreviewTab() {
   const pkg = usePackageStore((s) => s.current);
   const mockContext = useExecutionStore((s) => s.mockContext);
   const [serverUrl, setServerUrl] = reactExports.useState(null);
+  const [lanUrl, setLanUrl] = reactExports.useState(null);
+  const [showQr, setShowQr] = reactExports.useState(false);
+  const [qrDataUrl, setQrDataUrl] = reactExports.useState(null);
   const [previewMode, setPreviewMode] = reactExports.useState("frontend");
   const [device, setDevice] = reactExports.useState(DEVICES.find((d2) => d2.label === "iPhone 16 Pro") ?? DEVICES[0]);
   const [zoom, setZoom] = reactExports.useState(0.75);
@@ -9854,6 +11999,7 @@ function PreviewTab() {
   const [isCapturing, setIsCapturing] = reactExports.useState(false);
   const [captureData, setCaptureData] = reactExports.useState(null);
   const [copied, setCopied] = reactExports.useState(false);
+  const [statusTime2, setStatusTime] = reactExports.useState(currentTimeHHMM);
   const mediaRecorderRef = reactExports.useRef(null);
   const chunksRef = reactExports.useRef([]);
   const recordingTimerRef = reactExports.useRef(null);
@@ -9865,10 +12011,17 @@ function PreviewTab() {
   pkgRef.current = pkg;
   const mockContextRef = reactExports.useRef(mockContext);
   mockContextRef.current = mockContext;
+  const serverUrlRef = reactExports.useRef(serverUrl);
+  serverUrlRef.current = serverUrl;
+  const pendingHotReloadRef = reactExports.useRef(null);
   reactExports.useEffect(() => {
     appStorageRef.current = {};
     setPreviewMode("frontend");
   }, [pkg]);
+  reactExports.useEffect(() => {
+    const timer = setInterval(() => setStatusTime(currentTimeHHMM()), 1e3);
+    return () => clearInterval(timer);
+  }, []);
   reactExports.useEffect(() => {
     const handler = (ev) => {
       let msg2;
@@ -9933,10 +12086,20 @@ function PreviewTab() {
               target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: result.data, error: null }), "*");
             } else {
               target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: result.error }), "*");
+              useLogStore.getState().append({
+                level: "error",
+                ts: Date.now(),
+                message: `[RPC] ${method} → [${result.error?.code ?? "UNKNOWN"}] ${result.error?.message ?? "Unknown error"}`
+              });
             }
           }).catch((err) => {
             const target = iframeRef.current?.contentWindow;
             target?.postMessage(JSON.stringify({ type: "shapp:rpc_result", requestId, data: null, error: { code: "EXECUTION_ERROR", message: err.message } }), "*");
+            useLogStore.getState().append({
+              level: "error",
+              ts: Date.now(),
+              message: `[RPC] ${method} → [EXECUTION_ERROR] ${err.message}`
+            });
           });
           break;
         }
@@ -9964,24 +12127,38 @@ function PreviewTab() {
     } else {
       servingDir = pkg.frontendDir;
     }
-    window.devtool.server.start(pkg.dir, servingDir).then(({ url }) => setServerUrl(url));
+    window.devtool.server.start(pkg.dir, servingDir).then(({ url }) => {
+      setServerUrl(url);
+      window.devtool.server.getLanUrl().then((lan) => setLanUrl(lan));
+    });
     return () => {
       window.devtool.server.stop();
       setServerUrl(null);
+      setLanUrl(null);
+      setShowQr(false);
     };
   }, [pkg, previewMode]);
   reactExports.useEffect(() => {
     if (!pkg) return;
     const unsubscribe = window.devtool.package.onHotReload((event) => {
-      if (event.type === "frontend" && iframeRef.current) {
-        const currentSrc = iframeRef.current.src;
-        iframeRef.current.src = "";
-        setTimeout(() => {
-          if (iframeRef.current) iframeRef.current.src = currentSrc;
-        }, 50);
+      if (event.type === "frontend") {
+        if (pendingHotReloadRef.current) clearTimeout(pendingHotReloadRef.current);
+        if (iframeRef.current) iframeRef.current.src = "";
+        pendingHotReloadRef.current = setTimeout(() => {
+          pendingHotReloadRef.current = null;
+          if (iframeRef.current && serverUrlRef.current) {
+            iframeRef.current.src = serverUrlRef.current;
+          }
+        }, 100);
       }
     });
-    return unsubscribe;
+    return () => {
+      if (pendingHotReloadRef.current) {
+        clearTimeout(pendingHotReloadRef.current);
+        pendingHotReloadRef.current = null;
+      }
+      unsubscribe();
+    };
   }, [pkg]);
   reactExports.useCallback(() => {
     if (iframeRef.current) iframeRef.current.src = iframeRef.current.src;
@@ -9995,6 +12172,22 @@ function PreviewTab() {
   const handleOpenExternal = reactExports.useCallback(() => {
     if (serverUrl) window.devtool.shell.openExternal(serverUrl);
   }, [serverUrl]);
+  const handleShowQr = reactExports.useCallback(async () => {
+    const url = await window.devtool.server.getLanUrl();
+    if (!url) {
+      setQrDataUrl(null);
+      setShowQr(true);
+      return;
+    }
+    try {
+      const dataUrl = await QRCode.toDataURL(url, { width: 200, margin: 2, color: { dark: "#000000", light: "#ffffff" } });
+      setQrDataUrl(dataUrl);
+      setLanUrl(url);
+    } catch {
+      setQrDataUrl(null);
+    }
+    setShowQr(true);
+  }, []);
   reactExports.useCallback(() => {
     window.devtool.window.openDevTools();
   }, []);
@@ -10007,7 +12200,7 @@ function PreviewTab() {
       const data = await window.devtool.capture.screenshot(
         rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : void 0
       );
-      const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const ts2 = localFilenameTimestamp();
       setCaptureData({ data, mimeType: "image/png", filename: `screenshot-${ts2}.png` });
     } finally {
       setIsCapturing(false);
@@ -10032,10 +12225,10 @@ function PreviewTab() {
         const dpr = window.devicePixelRatio || 1;
         const cropX = Math.round(frameRect.left * dpr), cropY = Math.round(frameRect.top * dpr);
         const cropW = Math.round(frameRect.width * dpr), cropH = Math.round(frameRect.height * dpr);
-        const canvas = document.createElement("canvas");
-        canvas.width = cropW;
-        canvas.height = cropH;
-        const ctx = canvas.getContext("2d");
+        const canvas2 = document.createElement("canvas");
+        canvas2.width = cropW;
+        canvas2.height = cropH;
+        const ctx = canvas2.getContext("2d");
         const srcVideo = document.createElement("video");
         srcVideo.srcObject = stream;
         srcVideo.muted = true;
@@ -10046,7 +12239,7 @@ function PreviewTab() {
           animId = requestAnimationFrame(draw);
         };
         draw();
-        recordStream = canvas.captureStream(30);
+        recordStream = canvas2.captureStream(30);
         cleanupCanvas = () => {
           cancelAnimationFrame(animId);
           stream.getTracks().forEach((t22) => t22.stop());
@@ -10064,7 +12257,7 @@ function PreviewTab() {
         cleanupCanvas?.();
         recordStream.getTracks().forEach((t22) => t22.stop());
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const ts2 = localFilenameTimestamp();
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = reader.result;
@@ -10109,14 +12302,14 @@ function PreviewTab() {
     height: device.height * zoom,
     flexShrink: 0
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.root, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.toolbar, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.toolGroup, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.toolbar, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.toolGroup, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "select",
           {
             id: "deviceSelect",
-            className: styles$e.select,
+            className: styles$i.select,
             value: device.label,
             onChange: (e) => {
               const found = DEVICES.find((d2) => d2.label === e.target.value);
@@ -10125,7 +12318,7 @@ function PreviewTab() {
             children: DEVICE_GROUPS.map(({ group, devices }) => /* @__PURE__ */ jsxRuntimeExports.jsx("optgroup", { label: group, children: devices.map((d2) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: d2.label, children: d2.label }, d2.label)) }, group))
           }
         ),
-        !isDesktop && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$e.dimensionLabel, children: [
+        !isDesktop && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$i.dimensionLabel, children: [
           device.width,
           " × ",
           device.height
@@ -10133,7 +12326,7 @@ function PreviewTab() {
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "select",
           {
-            className: styles$e.select,
+            className: styles$i.select,
             value: String(zoom),
             onChange: (e) => setZoom(Number(e.target.value)),
             children: ZOOM_LEVELS.map((z) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: String(z), children: [
@@ -10143,12 +12336,12 @@ function PreviewTab() {
           }
         )
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.toolDivider }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.segmented, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.toolDivider }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.segmented, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: `${styles$e.segBtn} ${previewMode === "frontend" ? styles$e.segBtnActive : ""}`,
+            className: `${styles$i.segBtn} ${previewMode === "frontend" ? styles$i.segBtnActive : ""}`,
             onClick: () => setPreviewMode("frontend"),
             title: t2("preview.frontendTitle"),
             children: [
@@ -10161,7 +12354,7 @@ function PreviewTab() {
         adminEntry && /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: `${styles$e.segBtn} ${previewMode === "admin" ? styles$e.segBtnAdminActive : ""}`,
+            className: `${styles$i.segBtn} ${previewMode === "admin" ? styles$i.segBtnAdminActive : ""}`,
             onClick: () => setPreviewMode("admin"),
             title: t2("preview.adminTitle"),
             children: [
@@ -10172,67 +12365,67 @@ function PreviewTab() {
           }
         )
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.toolDivider }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.toolDivider }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          className: styles$e.toolBtn,
+          className: styles$i.toolBtn,
           onClick: handleCopyUrl,
           title: copied ? t2("preview.copied") + "!" : t2("preview.copyUrl"),
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(LinkIcon, {}),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.urlText, children: serverUrl ?? t2("preview.waitingServer") }),
-            copied && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.copiedBadge, children: t2("preview.copied") })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.urlText, children: serverUrl ?? t2("preview.waitingServer") }),
+            copied && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.copiedBadge, children: t2("preview.copied") })
           ]
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$e.toolBtn, onClick: handleOpenExternal, disabled: !serverUrl, title: t2("preview.openExternal"), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.toolBtn, onClick: handleOpenExternal, disabled: !serverUrl, title: t2("preview.openExternal"), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(OpenExternalIcon, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.toolBtnLabel, children: t2("preview.openExternal") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.toolBtnLabel, children: t2("preview.openExternal") })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$e.toolBtn, onClick: handleScreenshot, title: t2("preview.screenshot"), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.toolBtn, onClick: handleShowQr, disabled: !serverUrl, title: t2("preview.lanQr"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(QrIcon, {}),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.toolBtnLabel, children: t2("preview.lanQr") })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.toolBtn, onClick: handleScreenshot, title: t2("preview.screenshot"), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenshotIcon, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.toolBtnLabel, children: t2("preview.screenshot") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.toolBtnLabel, children: t2("preview.screenshot") })
       ] }),
-      !isRecording ? /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$e.toolBtn, onClick: handleStartRecording, title: t2("preview.record"), children: [
+      !isRecording ? /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$i.toolBtn, onClick: handleStartRecording, title: t2("preview.record"), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(RecordIcon, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.toolBtnLabel, children: t2("preview.record") })
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: `${styles$e.toolBtn} ${styles$e.toolBtnRecording}`, onClick: handleStopRecording, title: t2("preview.stopRecord"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.toolBtnLabel, children: t2("preview.record") })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: `${styles$i.toolBtn} ${styles$i.toolBtnRecording}`, onClick: handleStopRecording, title: t2("preview.stopRecord"), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(StopRecordIcon, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.toolBtnLabel, children: t2("common.stop") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.toolBtnLabel, children: t2("common.stop") })
       ] })
     ] }),
-    pkg?.warnings && pkg.warnings.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.warnings, children: pkg.warnings.map((w, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      "⚠ ",
-      w
-    ] }, i)) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.previewOuter, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.leftStrip, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.leftStripBtn, title: t2("preview.switchDevice"), onClick: () => document.getElementById("deviceSelect")?.focus(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeviceSmIcon, {}) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.leftStripSep }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.leftStripBtn, title: t2("preview.zoomIn"), onClick: () => {
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.previewOuter, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.leftStrip, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.leftStripBtn, title: t2("preview.switchDevice"), onClick: () => document.getElementById("deviceSelect")?.focus(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeviceSmIcon, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.leftStripSep }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.leftStripBtn, title: t2("preview.zoomIn"), onClick: () => {
           const idx = ZOOM_LEVELS.indexOf(zoom);
           if (idx < ZOOM_LEVELS.length - 1) setZoom(ZOOM_LEVELS[idx + 1]);
-        }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon$2, {}) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.leftStripBtn, title: t2("preview.zoomOut"), onClick: () => {
+        }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon$3, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.leftStripBtn, title: t2("preview.zoomOut"), onClick: () => {
           const idx = ZOOM_LEVELS.indexOf(zoom);
           if (idx > 0) setZoom(ZOOM_LEVELS[idx - 1]);
         }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(MinusIcon, {}) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.leftStripSep }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.leftStripBtn, title: t2("preview.fitWindow"), onClick: () => setZoom(0.75), children: /* @__PURE__ */ jsxRuntimeExports.jsx(FitIcon, {}) })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.leftStripSep }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.leftStripBtn, title: t2("preview.fitWindow"), onClick: () => setZoom(0.75), children: /* @__PURE__ */ jsxRuntimeExports.jsx(FitIcon, {}) })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$e.previewArea} ${isDesktop ? styles$e.previewAreaDesktop : ""}`, children: serverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$i.previewArea} ${isDesktop ? styles$i.previewAreaDesktop : ""}`, children: serverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
           ref: frameRef,
-          className: isDesktop ? styles$e.desktopFrame : styles$e.phoneFrameWrapper,
+          className: isDesktop ? styles$i.desktopFrame : styles$i.phoneFrameWrapper,
           style: isDesktop ? void 0 : frameStyle,
           children: [
-            !isDesktop && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.phoneBezel, style: { width: device.width * zoom, height: device.height * zoom }, children: [
+            !isDesktop && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.phoneBezel, style: { width: device.width * zoom, height: device.height * zoom }, children: [
               device.hasIsland && /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "div",
                 {
-                  className: styles$e.dynamicIsland,
+                  className: styles$i.dynamicIsland,
                   style: {
                     top: 12 * zoom,
                     width: 126 * zoom,
@@ -10244,14 +12437,14 @@ function PreviewTab() {
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "div",
                 {
-                  className: styles$e.phoneStatus,
+                  className: styles$i.phoneStatus,
                   style: {
                     height: device.statusBarH * zoom,
                     opacity: zoom < 0.45 ? 0 : 1
                   },
                   children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.statusTime, children: "9:41" }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.statusIcons, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.statusTime, children: statusTime2 }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.statusIcons, children: [
                       /* @__PURE__ */ jsxRuntimeExports.jsx(SignalIcon, {}),
                       /* @__PURE__ */ jsxRuntimeExports.jsx(WifiIcon, {}),
                       /* @__PURE__ */ jsxRuntimeExports.jsx(BatteryIcon, {})
@@ -10263,7 +12456,7 @@ function PreviewTab() {
                 "div",
                 {
                   ref: iframeWrapperRef,
-                  className: styles$e.iframeWrapper,
+                  className: styles$i.iframeWrapper,
                   style: {
                     top: device.statusBarH * zoom,
                     left: 0,
@@ -10275,7 +12468,7 @@ function PreviewTab() {
                     {
                       ref: iframeRef,
                       src: serverUrl,
-                      className: styles$e.iframe,
+                      className: styles$i.iframe,
                       style: {
                         width: device.width,
                         height: device.height - device.statusBarH - device.safeBottom,
@@ -10292,7 +12485,7 @@ function PreviewTab() {
               device.safeBottom > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "div",
                 {
-                  className: styles$e.homeIndicator,
+                  className: styles$i.homeIndicator,
                   style: {
                     opacity: zoom < 0.45 ? 0 : 1,
                     height: device.safeBottom * zoom,
@@ -10300,7 +12493,7 @@ function PreviewTab() {
                   }
                 }
               ),
-              previewMode === "admin" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.adminBadge, children: t2("preview.adminBadge") }),
+              previewMode === "admin" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.adminBadge, children: t2("preview.adminBadge") }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "div",
                 {
@@ -10362,7 +12555,7 @@ function PreviewTab() {
               {
                 ref: iframeRef,
                 src: serverUrl,
-                className: styles$e.iframe,
+                className: styles$i.iframe,
                 title: previewMode === "admin" ? "Admin Preview" : "App Preview",
                 sandbox: "allow-scripts allow-same-origin allow-forms",
                 onLoad: handleIframeLoad
@@ -10370,7 +12563,7 @@ function PreviewTab() {
             )
           ]
         }
-      ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.empty, children: previewMode === "admin" ? adminEntry ? t2("preview.startingAdmin") : t2("preview.noAdminEntry") : pkg?.manifest?.entry?.frontend ? t2("preview.startingStatic") : t2("preview.noFrontendEntry") }) })
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.empty, children: previewMode === "admin" ? adminEntry ? t2("preview.startingAdmin") : t2("preview.noAdminEntry") : pkg?.manifest?.entry?.frontend ? t2("preview.startingStatic") : t2("preview.noFrontendEntry") }) })
     ] }),
     captureData && pkg && /* @__PURE__ */ jsxRuntimeExports.jsx(
       CapturePanel,
@@ -10381,7 +12574,18 @@ function PreviewTab() {
         appDir: pkg.dir,
         onClose: () => setCaptureData(null)
       }
-    )
+    ),
+    showQr && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.qrOverlay, onClick: () => setShowQr(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.qrModal, onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$i.qrModalHeader, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$i.qrModalTitle, children: t2("preview.lanQrTitle") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$i.qrCloseBtn, onClick: () => setShowQr(false), children: "✕" })
+      ] }),
+      lanUrl && qrDataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: qrDataUrl, alt: "QR Code", className: styles$i.qrImage }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.qrUrl, children: lanUrl }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.qrTip, children: t2("preview.lanQrScanTip") })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$i.qrNoIp, children: t2("preview.lanQrNoIp") })
+    ] }) })
   ] });
 }
 function FrontendIcon() {
@@ -10457,7 +12661,7 @@ function DeviceSmIcon() {
 function FitIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 4V2a1 1 0 011-1h2M10 1h2a1 1 0 011 1v2M13 10v2a1 1 0 01-1 1h-2M4 13H2a1 1 0 01-1-1v-2", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round" }) });
 }
-function PlusIcon$2() {
+function PlusIcon$3() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "7", y1: "2", x2: "7", y2: "12", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "2", y1: "7", x2: "12", y2: "7", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
@@ -10466,37 +12670,51 @@ function PlusIcon$2() {
 function MinusIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "2", y1: "7", x2: "12", y2: "7", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) });
 }
-const root$7 = "_root_ho80o_1";
-const toolbar$3 = "_toolbar_ho80o_15";
-const filters = "_filters_ho80o_35";
-const filterBtn = "_filterBtn_ho80o_45";
-const active$1 = "_active_ho80o_71";
-const autoScrollLabel = "_autoScrollLabel_ho80o_81";
-const spacer = "_spacer_ho80o_101";
-const searchInput = "_searchInput_ho80o_105";
-const actionBtn$1 = "_actionBtn_ho80o_135";
-const separator = "_separator_ho80o_193";
-const separatorLine = "_separatorLine_ho80o_211";
-const separatorLabel = "_separatorLabel_ho80o_223";
-const msgWrap = "_msgWrap_ho80o_235";
-const expandBtn = "_expandBtn_ho80o_251";
-const jsonBlock = "_jsonBlock_ho80o_277";
-const logArea = "_logArea_ho80o_305";
-const logLine = "_logLine_ho80o_323";
-const ts = "_ts_ho80o_343";
-const level = "_level_ho80o_353";
-const msg$1 = "_msg_ho80o_235";
-const empty$4 = "_empty_ho80o_375";
-const styles$d = {
-  root: root$7,
+function QrIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "1", y: "1", width: "4", height: "4", rx: "0.5", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2.5", y: "2.5", width: "1", height: "1", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "7", y: "1", width: "4", height: "4", rx: "0.5", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "8.5", y: "2.5", width: "1", height: "1", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "1", y: "7", width: "4", height: "4", rx: "0.5", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2.5", y: "8.5", width: "1", height: "1", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "7", y: "7", width: "1.5", height: "1.5", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9.5", y: "7", width: "1.5", height: "1.5", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "7", y: "9.5", width: "1.5", height: "1.5", fill: "currentColor" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9.5", y: "9.5", width: "1.5", height: "1.5", fill: "currentColor" })
+  ] });
+}
+const root$8 = "_root_10p6s_1";
+const toolbar$3 = "_toolbar_10p6s_17";
+const filters = "_filters_10p6s_37";
+const filterBtn = "_filterBtn_10p6s_47";
+const active$1 = "_active_10p6s_73";
+const autoScrollLabel = "_autoScrollLabel_10p6s_83";
+const spacer$1 = "_spacer_10p6s_103";
+const searchInput$2 = "_searchInput_10p6s_107";
+const actionBtn$2 = "_actionBtn_10p6s_137";
+const separator = "_separator_10p6s_195";
+const separatorLine = "_separatorLine_10p6s_213";
+const separatorLabel = "_separatorLabel_10p6s_225";
+const msgWrap = "_msgWrap_10p6s_237";
+const expandBtn = "_expandBtn_10p6s_253";
+const jsonBlock = "_jsonBlock_10p6s_279";
+const logArea = "_logArea_10p6s_307";
+const logLine = "_logLine_10p6s_327";
+const ts = "_ts_10p6s_347";
+const level = "_level_10p6s_359";
+const msg$1 = "_msg_10p6s_237";
+const empty$7 = "_empty_10p6s_385";
+const styles$h = {
+  root: root$8,
   toolbar: toolbar$3,
   filters,
   filterBtn,
   active: active$1,
   autoScrollLabel,
-  spacer,
-  searchInput,
-  actionBtn: actionBtn$1,
+  spacer: spacer$1,
+  searchInput: searchInput$2,
+  actionBtn: actionBtn$2,
   separator,
   separatorLine,
   separatorLabel,
@@ -10508,7 +12726,7 @@ const styles$d = {
   ts,
   level,
   msg: msg$1,
-  empty: empty$4
+  empty: empty$7
 };
 const LEVEL_COLORS = {
   log: "var(--text-secondary)",
@@ -10529,25 +12747,25 @@ function tryParseJson(msg2) {
 function LogRow({ entry }) {
   const [expanded, setExpanded] = reactExports.useState(false);
   if (entry.uiType === "separator") {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.separator, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.separatorLine }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.separatorLabel, children: entry.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.separatorLine })
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$h.separator, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.separatorLine }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.separatorLabel, children: entry.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.separatorLine })
     ] });
   }
   const level2 = entry.level ?? "log";
   const { text: text2, json: json2 } = tryParseJson(entry.message);
   const hasJson = json2 !== void 0;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.logLine, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.ts, children: new Date(entry.ts).toISOString().slice(11, 23) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.level, style: { color: LEVEL_COLORS[level2] }, children: level2.toUpperCase().padEnd(5) }),
-    hasJson ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$d.msgWrap, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.expandBtn, onClick: () => setExpanded(!expanded), children: expanded ? "▼" : "▶" }),
-      expanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$d.jsonBlock, children: JSON.stringify(json2, null, 2) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$d.msg, title: text2, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$h.logLine, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.ts, children: formatLogTime(entry.ts) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.level, style: { color: LEVEL_COLORS[level2] }, children: level2.toUpperCase().padEnd(5) }),
+    hasJson ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$h.msgWrap, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$h.expandBtn, onClick: () => setExpanded(!expanded), children: expanded ? "▼" : "▶" }),
+      expanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$h.jsonBlock, children: JSON.stringify(json2, null, 2) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$h.msg, title: text2, children: [
         text2.slice(0, 120),
         text2.length > 120 ? "…" : ""
       ] })
-    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.msg, children: entry.message })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$h.msg, children: entry.message })
   ] });
 }
 function LogTab() {
@@ -10571,26 +12789,12 @@ function LogTab() {
     if (search2 && !e.message.toLowerCase().includes(search2.toLowerCase())) return false;
     return true;
   });
-  const handleSave = reactExports.useCallback(async () => {
-    const text2 = entries.filter((e) => e.uiType !== "separator").map((e) => {
-      if (e.uiType === "separator") return `--- ${e.label} ---`;
-      const ts2 = new Date(e.ts).toISOString().slice(11, 23);
-      return `[${ts2}] [${e.level?.toUpperCase() ?? "LOG"}] ${e.message}`;
-    }).join("\n");
-    const blob = new Blob([text2], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `devtool-logs-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [entries]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.root, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.toolbar, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.filters, children: ["all", "info", "warn", "error"].map((f) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$h.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$h.toolbar, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$h.filters, children: ["all", "info", "warn", "error"].map((f) => /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
-          className: `${styles$d.filterBtn} ${filter === f ? styles$d.active : ""}`,
+          className: `${styles$h.filterBtn} ${filter === f ? styles$h.active : ""}`,
           onClick: () => setFilter(f),
           children: f === "all" ? t2("log.all") : f.toUpperCase()
         },
@@ -10599,15 +12803,15 @@ function LogTab() {
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "input",
         {
-          className: styles$d.searchInput,
+          className: styles$h.searchInput,
           type: "search",
           placeholder: t2("log.searchPlaceholder"),
           value: search2,
           onChange: (e) => setSearch(e.target.value)
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.spacer }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: styles$d.autoScrollLabel, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$h.spacer }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: styles$h.autoScrollLabel, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
           {
@@ -10618,64 +12822,63 @@ function LogTab() {
         ),
         t2("log.lockBottom")
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.actionBtn, onClick: handleSave, title: t2("log.saveTitle"), children: t2("log.save") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.actionBtn, onClick: clear, title: t2("log.clearTitle"), children: t2("log.clear") })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$h.actionBtn, onClick: clear, title: t2("log.clearTitle"), children: t2("log.clear") })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.logArea, children: [
-      visible2.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.empty, children: t2("log.empty") }) : visible2.map((entry, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(LogRow, { entry }, i)),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$h.logArea, children: [
+      visible2.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$h.empty, children: t2("log.empty") }) : visible2.map((entry, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(LogRow, { entry }, i)),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref: bottomRef })
     ] })
   ] });
 }
-const root$6 = "_root_1jazv_1";
-const toolbar$2 = "_toolbar_1jazv_19";
-const filterInput = "_filterInput_1jazv_39";
-const addBtn = "_addBtn_1jazv_73";
-const actionBtn = "_actionBtn_1jazv_105";
-const iconBtn = "_iconBtn_1jazv_135";
-const tableWrap = "_tableWrap_1jazv_171";
-const empty$3 = "_empty_1jazv_181";
-const table$1 = "_table_1jazv_171";
-const rowAlt = "_rowAlt_1jazv_251";
-const colKey = "_colKey_1jazv_267";
-const colValue = "_colValue_1jazv_269";
-const colActions = "_colActions_1jazv_271";
-const cellKey = "_cellKey_1jazv_275";
-const cellValue = "_cellValue_1jazv_277";
-const cellActions = "_cellActions_1jazv_279";
-const keyText = "_keyText_1jazv_289";
-const valuePreview = "_valuePreview_1jazv_311";
-const rowBtn = "_rowBtn_1jazv_341";
-const deleteBtn = "_deleteBtn_1jazv_367";
-const footer$2 = "_footer_1jazv_379";
-const footerInfo = "_footerInfo_1jazv_399";
-const clearBtn = "_clearBtn_1jazv_409";
-const overlay$3 = "_overlay_1jazv_445";
-const modal$4 = "_modal_1jazv_467";
-const modalHeader = "_modalHeader_1jazv_489";
-const modalClose = "_modalClose_1jazv_511";
-const modalBody = "_modalBody_1jazv_533";
-const fieldRow = "_fieldRow_1jazv_547";
-const fieldLabel$1 = "_fieldLabel_1jazv_559";
-const fieldInput = "_fieldInput_1jazv_575";
-const fieldReadonly = "_fieldReadonly_1jazv_605";
-const fieldTextarea = "_fieldTextarea_1jazv_619";
-const fieldError = "_fieldError_1jazv_651";
-const errorMsg = "_errorMsg_1jazv_659";
-const confirmText = "_confirmText_1jazv_669";
-const modalFooter = "_modalFooter_1jazv_681";
-const cancelModalBtn = "_cancelModalBtn_1jazv_697";
-const saveBtn$1 = "_saveBtn_1jazv_715";
-const dangerBtn = "_dangerBtn_1jazv_745";
-const styles$c = {
-  root: root$6,
+const root$7 = "_root_ubwjv_1";
+const toolbar$2 = "_toolbar_ubwjv_21";
+const filterInput = "_filterInput_ubwjv_41";
+const addBtn = "_addBtn_ubwjv_75";
+const actionBtn$1 = "_actionBtn_ubwjv_107";
+const iconBtn = "_iconBtn_ubwjv_137";
+const tableWrap = "_tableWrap_ubwjv_173";
+const empty$6 = "_empty_ubwjv_183";
+const table$1 = "_table_ubwjv_173";
+const rowAlt = "_rowAlt_ubwjv_253";
+const colKey = "_colKey_ubwjv_269";
+const colValue = "_colValue_ubwjv_271";
+const colActions = "_colActions_ubwjv_273";
+const cellKey = "_cellKey_ubwjv_277";
+const cellValue = "_cellValue_ubwjv_279";
+const cellActions = "_cellActions_ubwjv_281";
+const keyText = "_keyText_ubwjv_291";
+const valuePreview = "_valuePreview_ubwjv_313";
+const rowBtn = "_rowBtn_ubwjv_343";
+const deleteBtn = "_deleteBtn_ubwjv_369";
+const footer$3 = "_footer_ubwjv_381";
+const footerInfo = "_footerInfo_ubwjv_401";
+const clearBtn = "_clearBtn_ubwjv_411";
+const overlay$4 = "_overlay_ubwjv_447";
+const modal$3 = "_modal_ubwjv_469";
+const modalHeader = "_modalHeader_ubwjv_491";
+const modalClose = "_modalClose_ubwjv_513";
+const modalBody = "_modalBody_ubwjv_535";
+const fieldRow$1 = "_fieldRow_ubwjv_549";
+const fieldLabel$3 = "_fieldLabel_ubwjv_561";
+const fieldInput$2 = "_fieldInput_ubwjv_577";
+const fieldReadonly = "_fieldReadonly_ubwjv_607";
+const fieldTextarea$1 = "_fieldTextarea_ubwjv_621";
+const fieldError = "_fieldError_ubwjv_653";
+const errorMsg = "_errorMsg_ubwjv_661";
+const confirmText = "_confirmText_ubwjv_671";
+const modalFooter = "_modalFooter_ubwjv_683";
+const cancelModalBtn = "_cancelModalBtn_ubwjv_699";
+const saveBtn = "_saveBtn_ubwjv_717";
+const dangerBtn = "_dangerBtn_ubwjv_747";
+const styles$g = {
+  root: root$7,
   toolbar: toolbar$2,
   filterInput,
   addBtn,
-  actionBtn,
+  actionBtn: actionBtn$1,
   iconBtn,
   tableWrap,
-  empty: empty$3,
+  empty: empty$6,
   table: table$1,
   rowAlt,
   colKey,
@@ -10688,25 +12891,25 @@ const styles$c = {
   valuePreview,
   rowBtn,
   deleteBtn,
-  footer: footer$2,
+  footer: footer$3,
   footerInfo,
   clearBtn,
-  overlay: overlay$3,
-  modal: modal$4,
+  overlay: overlay$4,
+  modal: modal$3,
   modalHeader,
   modalClose,
   modalBody,
-  fieldRow,
-  fieldLabel: fieldLabel$1,
-  fieldInput,
+  fieldRow: fieldRow$1,
+  fieldLabel: fieldLabel$3,
+  fieldInput: fieldInput$2,
   fieldReadonly,
-  fieldTextarea,
+  fieldTextarea: fieldTextarea$1,
   fieldError,
   errorMsg,
   confirmText,
   modalFooter,
   cancelModalBtn,
-  saveBtn: saveBtn$1,
+  saveBtn,
   dangerBtn
 };
 function formatValue(raw, maxLen = 60) {
@@ -10811,11 +13014,11 @@ function DbTab() {
     URL.revokeObjectURL(url);
   }
   async function handleImport() {
-    const input2 = document.createElement("input");
-    input2.type = "file";
-    input2.accept = ".json";
-    input2.onchange = async () => {
-      const file = input2.files?.[0];
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
       if (!file || !dbPath) return;
       try {
         const text2 = await file.text();
@@ -10829,39 +13032,39 @@ function DbTab() {
       } catch {
       }
     };
-    input2.click();
+    input.click();
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.root, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.toolbar, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.toolbar, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "input",
         {
-          className: styles$c.filterInput,
+          className: styles$g.filterInput,
           placeholder: t2("db.filterPlaceholder"),
           value: filter,
           onChange: (e) => setFilter(e.target.value)
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.addBtn, onClick: openNew, disabled: !pkg, children: t2("db.add") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.actionBtn, onClick: handleExport, disabled: entries.length === 0, children: t2("db.export") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.actionBtn, onClick: handleImport, disabled: !pkg, children: t2("db.import") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.iconBtn, onClick: loadEntries, title: t2("common.refresh"), children: "↺" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.addBtn, onClick: openNew, disabled: !pkg, children: t2("db.add") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.actionBtn, onClick: handleExport, disabled: entries.length === 0, children: t2("db.export") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.actionBtn, onClick: handleImport, disabled: !pkg, children: t2("db.import") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.iconBtn, onClick: loadEntries, title: t2("common.refresh"), children: "↺" })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.tableWrap, children: visible2.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.empty, children: pkg ? filter ? t2("db.noMatch") : t2("db.empty") : t2("db.openFirst") }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: styles$c.table, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.tableWrap, children: visible2.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.empty, children: pkg ? filter ? t2("db.noMatch") : t2("db.empty") : t2("db.openFirst") }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: styles$g.table, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$c.colKey, children: t2("db.colKey") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$c.colValue, children: t2("db.colValue") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$c.colActions, children: t2("db.colActions") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$g.colKey, children: t2("db.colKey") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$g.colValue, children: t2("db.colValue") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: styles$g.colActions, children: t2("db.colActions") })
       ] }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: visible2.map((entry, idx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: idx % 2 === 1 ? styles$c.rowAlt : "", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: styles$c.cellKey, title: entry.key, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.keyText, children: entry.key }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: styles$c.cellValue, title: entry.value, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.valuePreview, children: formatValue(entry.value) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("td", { className: styles$c.cellActions, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.rowBtn, onClick: () => openEdit(entry), title: t2("common.edit"), children: "✏" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: visible2.map((entry, idx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: idx % 2 === 1 ? styles$g.rowAlt : "", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: styles$g.cellKey, title: entry.key, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.keyText, children: entry.key }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: styles$g.cellValue, title: entry.value, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.valuePreview, children: formatValue(entry.value) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("td", { className: styles$g.cellActions, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.rowBtn, onClick: () => openEdit(entry), title: t2("common.edit"), children: "✏" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
-              className: `${styles$c.rowBtn} ${styles$c.deleteBtn}`,
+              className: `${styles$g.rowBtn} ${styles$g.deleteBtn}`,
               onClick: () => handleDelete2(entry.key),
               title: t2("common.delete"),
               children: "🗑"
@@ -10870,30 +13073,30 @@ function DbTab() {
         ] })
       ] }, entry.key)) })
     ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.footer, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.footerInfo, children: t2("db.footerInfo", { count: entries.length, size: totalBytes(entries) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.footer, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.footerInfo, children: t2("db.footerInfo", { count: entries.length, size: totalBytes(entries) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
-          className: styles$c.clearBtn,
+          className: styles$g.clearBtn,
           onClick: () => setConfirmClear(true),
           disabled: entries.length === 0,
           children: t2("db.clearAll")
         }
       )
     ] }),
-    editState && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.overlay, onClick: closeEdit, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modal, onClick: (e) => e.stopPropagation(), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modalHeader, children: [
+    editState && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.overlay, onClick: closeEdit, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modal, onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modalHeader, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: editState.isNew ? t2("db.newKv") : t2("db.editKey", { key: editState.key }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.modalClose, onClick: closeEdit, children: "✕" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.modalClose, onClick: closeEdit, children: "✕" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modalBody, children: [
-        editState.isNew && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.fieldRow, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$c.fieldLabel, children: t2("db.colKey") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modalBody, children: [
+        editState.isNew && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.fieldRow, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$g.fieldLabel, children: t2("db.colKey") }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "input",
             {
-              className: styles$c.fieldInput,
+              className: styles$g.fieldInput,
               autoFocus: true,
               placeholder: "my_key",
               value: editState.key,
@@ -10901,17 +13104,17 @@ function DbTab() {
             }
           )
         ] }),
-        !editState.isNew && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.fieldRow, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$c.fieldLabel, children: t2("db.colKey") }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.fieldReadonly, children: editState.key })
+        !editState.isNew && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.fieldRow, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$g.fieldLabel, children: t2("db.colKey") }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$g.fieldReadonly, children: editState.key })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.fieldRow, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$c.fieldLabel, children: t2("db.valueJson") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.fieldRow, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$g.fieldLabel, children: t2("db.valueJson") }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "textarea",
             {
               ref: editValueRef,
-              className: `${styles$c.fieldTextarea} ${editError ? styles$c.fieldError : ""}`,
+              className: `${styles$g.fieldTextarea} ${editError ? styles$g.fieldError : ""}`,
               value: editState.value,
               onChange: (e) => {
                 setEditState({ ...editState, value: e.target.value });
@@ -10928,14 +13131,14 @@ function DbTab() {
             }
           )
         ] }),
-        editError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.errorMsg, children: editError })
+        editError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.errorMsg, children: editError })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modalFooter, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.cancelModalBtn, onClick: closeEdit, children: t2("common.cancel") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modalFooter, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.cancelModalBtn, onClick: closeEdit, children: t2("common.cancel") }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            className: styles$c.saveBtn,
+            className: styles$g.saveBtn,
             onClick: handleSave,
             disabled: !!editError,
             children: t2("common.save")
@@ -10943,42 +13146,1365 @@ function DbTab() {
         )
       ] })
     ] }) }),
-    confirmClear && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.overlay, onClick: () => setConfirmClear(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modal, onClick: (e) => e.stopPropagation(), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modalHeader, children: [
+    confirmClear && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.overlay, onClick: () => setConfirmClear(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modal, onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modalHeader, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: t2("db.confirmClear") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.modalClose, onClick: () => setConfirmClear(false), children: "✕" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.modalClose, onClick: () => setConfirmClear(false), children: "✕" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.modalBody, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: styles$c.confirmText, children: t2("db.confirmClearText", { count: entries.length }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.modalFooter, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.cancelModalBtn, onClick: () => setConfirmClear(false), children: t2("common.cancel") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$c.dangerBtn, onClick: handleClearAll, children: t2("db.confirmClear") })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$g.modalBody, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: styles$g.confirmText, children: t2("db.confirmClearText", { count: entries.length }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$g.modalFooter, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.cancelModalBtn, onClick: () => setConfirmClear(false), children: t2("common.cancel") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$g.dangerBtn, onClick: handleClearAll, children: t2("db.confirmClear") })
       ] })
     ] }) })
   ] });
 }
-const overlay$2 = "_overlay_a22si_1";
-const modal$3 = "_modal_a22si_23";
+const root$6 = "_root_1yos8_1";
+const header$5 = "_header_1yos8_23";
+const headerTitle$1 = "_headerTitle_1yos8_41";
+const headerCount = "_headerCount_1yos8_53";
+const list$6 = "_list_1yos8_75";
+const item = "_item_1yos8_87";
+const itemIcon = "_itemIcon_1yos8_107";
+const itemText = "_itemText_1yos8_117";
+const empty$5 = "_empty_1yos8_133";
+const emptyIcon$2 = "_emptyIcon_1yos8_155";
+const styles$f = {
+  root: root$6,
+  header: header$5,
+  headerTitle: headerTitle$1,
+  headerCount,
+  list: list$6,
+  item,
+  itemIcon,
+  itemText,
+  empty: empty$5,
+  emptyIcon: emptyIcon$2
+};
+function IssuesTab() {
+  const t2 = useT();
+  const warnings = usePackageStore((s) => s.current?.warnings ?? []);
+  if (warnings.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$f.root, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.empty, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$f.emptyIcon, children: "✅" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: t2("issues.noIssues") })
+    ] }) });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.root, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.header, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$f.headerTitle, children: [
+        "⚠ ",
+        t2("issues.title")
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$f.headerCount, children: warnings.length })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$f.list, children: warnings.map((w, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$f.item, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$f.itemIcon, children: "⚠" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$f.itemText, children: w })
+    ] }, i)) })
+  ] });
+}
+const sidebar = "_sidebar_3psue_1";
+const manifestHeader = "_manifestHeader_3psue_23";
+const logoAvatar = "_logoAvatar_3psue_41";
+const logoOverlay = "_logoOverlay_3psue_63";
+const logoImg = "_logoImg_3psue_65";
+const headerRight = "_headerRight_3psue_81";
+const headerTitle = "_headerTitle_3psue_83";
+const saveIndicator = "_saveIndicator_3psue_85";
+const saveChip = "_saveChip_3psue_87";
+const saveChipSaving = "_saveChipSaving_3psue_89";
+const saveChipSaved = "_saveChipSaved_3psue_91";
+const saveChipError = "_saveChipError_3psue_93";
+const spinnerSvg = "_spinnerSvg_3psue_97";
+const section$1 = "_section_3psue_103";
+const sectionHeader = "_sectionHeader_3psue_105";
+const sectionChevron = "_sectionChevron_3psue_109";
+const sectionTitle$1 = "_sectionTitle_3psue_111";
+const badge$1 = "_badge_3psue_113";
+const badgeDefault$1 = "_badgeDefault_3psue_115";
+const badgeSuccess = "_badgeSuccess_3psue_117";
+const badgeWarn = "_badgeWarn_3psue_119";
+const sectionBody = "_sectionBody_3psue_121";
+const fieldList = "_fieldList_3psue_127";
+const fieldRow = "_fieldRow_3psue_129";
+const fieldLabel$2 = "_fieldLabel_3psue_131";
+const fieldInput$1 = "_fieldInput_3psue_133";
+const fieldTextarea = "_fieldTextarea_3psue_139";
+const mono = "_mono_3psue_141";
+const readonlyList = "_readonlyList_3psue_149";
+const readonlyItem = "_readonlyItem_3psue_151";
+const readonlyItemLabel = "_readonlyItemLabel_3psue_153";
+const readonlyVal = "_readonlyVal_3psue_155";
+const readonlySubList = "_readonlySubList_3psue_157";
+const readonlySubItem = "_readonlySubItem_3psue_159";
+const tagRow = "_tagRow_3psue_165";
+const tag = "_tag_3psue_165";
+const permReadList = "_permReadList_3psue_173";
+const permReadItem = "_permReadItem_3psue_175";
+const permReadScope = "_permReadScope_3psue_177";
+const permReadReason = "_permReadReason_3psue_179";
+const carouselAddPlus = "_carouselAddPlus_3psue_255";
+const mediaEditor = "_mediaEditor_3psue_267";
+const mediaItemOver = "_mediaItemOver_3psue_295";
+const coverBadge = "_coverBadge_3psue_299";
+const mediaItemDelete = "_mediaItemDelete_3psue_311";
+const mediaGridItem = "_mediaGridItem_3psue_327";
+const mediaEmpty = "_mediaEmpty_3psue_329";
+const mediaGrid = "_mediaGrid_3psue_327";
+const mediaGridImg = "_mediaGridImg_3psue_359";
+const mediaAddGridBtn = "_mediaAddGridBtn_3psue_361";
+const spacer = "_spacer_3psue_389";
+const footer$2 = "_footer_3psue_391";
+const footerBtn = "_footerBtn_3psue_393";
+const styles$e = {
+  sidebar,
+  manifestHeader,
+  logoAvatar,
+  logoOverlay,
+  logoImg,
+  headerRight,
+  headerTitle,
+  saveIndicator,
+  saveChip,
+  saveChipSaving,
+  saveChipSaved,
+  saveChipError,
+  spinnerSvg,
+  section: section$1,
+  sectionHeader,
+  sectionChevron,
+  sectionTitle: sectionTitle$1,
+  badge: badge$1,
+  badgeDefault: badgeDefault$1,
+  badgeSuccess,
+  badgeWarn,
+  sectionBody,
+  fieldList,
+  fieldRow,
+  fieldLabel: fieldLabel$2,
+  fieldInput: fieldInput$1,
+  fieldTextarea,
+  mono,
+  readonlyList,
+  readonlyItem,
+  readonlyItemLabel,
+  readonlyVal,
+  readonlySubList,
+  readonlySubItem,
+  tagRow,
+  tag,
+  permReadList,
+  permReadItem,
+  permReadScope,
+  permReadReason,
+  carouselAddPlus,
+  mediaEditor,
+  mediaItemOver,
+  coverBadge,
+  mediaItemDelete,
+  mediaGridItem,
+  mediaEmpty,
+  mediaGrid,
+  mediaGridImg,
+  mediaAddGridBtn,
+  spacer,
+  footer: footer$2,
+  footerBtn
+};
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function Sidebar() {
+  const t2 = useT();
+  const pkg = usePackageStore((s) => s.current);
+  const setManifest = usePackageStore((s) => s.setManifest);
+  const [draft, setDraft] = reactExports.useState(null);
+  const [saveStatus, setSaveStatus] = reactExports.useState("idle");
+  const saveTimerRef = reactExports.useRef(null);
+  const skipReloadRef = reactExports.useRef(false);
+  reactExports.useEffect(() => {
+    if (pkg?.manifest) setDraft(pkg.manifest);
+  }, [pkg?.manifest]);
+  reactExports.useEffect(() => {
+    if (!window.devtool.package.onManifestReload) return;
+    return window.devtool.package.onManifestReload((m) => {
+      if (skipReloadRef.current) return;
+      setDraft(m);
+      setManifest(m);
+    });
+  }, [setManifest]);
+  const scheduleSave = reactExports.useCallback(
+    (updated) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      setSaveStatus("saving");
+      saveTimerRef.current = setTimeout(async () => {
+        if (!pkg) return;
+        skipReloadRef.current = true;
+        try {
+          await window.devtool.package.saveManifest(pkg.dir, updated);
+          setManifest(updated);
+          setSaveStatus("saved");
+          setTimeout(() => setSaveStatus("idle"), 1500);
+        } catch {
+          setSaveStatus("error");
+        } finally {
+          setTimeout(() => {
+            skipReloadRef.current = false;
+          }, 1200);
+        }
+      }, 600);
+    },
+    [pkg, setManifest]
+  );
+  const update = reactExports.useCallback(
+    (patch2) => {
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev, ...patch2 };
+        scheduleSave(next);
+        return next;
+      });
+    },
+    [scheduleSave]
+  );
+  reactExports.useEffect(() => {
+    if (!window.devtool.package.onAssetsChanged) return;
+    return window.devtool.package.onAssetsChanged((info2) => {
+      if (info2.role === "logo" && info2.appDir === pkg?.dir) {
+        update({ logo: "assets/logo.webp" });
+      }
+    });
+  }, [pkg?.dir, update]);
+  if (!pkg || !draft) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: styles$e.sidebar, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.manifestHeader, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LogoAvatar,
+        {
+          appDir: pkg.dir,
+          logo: draft.logo,
+          onLogoChange: (relPath) => update({ logo: relPath })
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.headerRight, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.headerTitle, children: draft.title || draft.name || t2("sidebar.unnamedApp") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.saveIndicator, children: [
+          saveStatus === "saving" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$e.saveChip} ${styles$e.saveChipSaving}`, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(SpinnerIcon, {}),
+            " ",
+            t2("sidebar.saving")
+          ] }),
+          saveStatus === "saved" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$e.saveChip} ${styles$e.saveChipSaved}`, children: [
+            "✓ ",
+            t2("sidebar.saved")
+          ] }),
+          saveStatus === "error" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$e.saveChip} ${styles$e.saveChipError}`, children: [
+            "! ",
+            t2("sidebar.saveError")
+          ] })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.appInfo"), defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.fieldList, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.title"), value: draft.title ?? "", onChange: (v2) => update({ title: v2 }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.name"), value: draft.name ?? "", onChange: (v2) => update({ name: v2 }), mono: true }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.version"), value: draft.version ?? "", onChange: (v2) => update({ version: v2 }), mono: true }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(FieldRow, { label: t2("sidebar.description"), value: draft.description ?? "", onChange: (v2) => update({ description: v2 }), multiline: true })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.media"), defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      MediaEditor,
+      {
+        appDir: pkg.dir,
+        manifestImages: draft.images,
+        onImagesChange: (imgs) => update({ images: imgs }),
+        t: t2
+      }
+    ) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarSection, { title: t2("sidebar.moreInfo"), defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyList, children: [
+      draft.id && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyItem, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.id") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.readonlyVal} ${styles$e.mono}`, children: draft.id })
+      ] }),
+      draft.runtime && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyItem, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.runtime") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.readonlyVal} ${styles$e.mono}`, children: draft.runtime })
+      ] }),
+      (draft.entry?.frontend || draft.entry?.backend || draft.entry?.admin) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyItem, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.entryPoints") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlySubList, children: [
+          draft.entry?.frontend && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlySubItem, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.entryFrontend") }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.readonlyVal} ${styles$e.mono}`, children: draft.entry.frontend })
+          ] }),
+          draft.entry?.backend && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlySubItem, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.entryBackend") }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.readonlyVal} ${styles$e.mono}`, children: draft.entry.backend })
+          ] }),
+          draft.entry?.admin && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlySubItem, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.entryAdmin") }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.readonlyVal} ${styles$e.mono}`, children: draft.entry.admin })
+          ] })
+        ] })
+      ] }),
+      (draft.capabilities ?? []).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyItem, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.capabilities") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.tagRow, children: draft.capabilities.map((cap2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.tag, children: cap2 }, cap2)) })
+      ] }),
+      (draft.permissions ?? []).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.readonlyItem, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.readonlyItemLabel, children: t2("sidebar.permissions") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: styles$e.permReadList, children: draft.permissions.map((p, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: styles$e.permReadItem, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.permReadScope} ${styles$e.mono}`, children: p.scope }),
+          p.reason && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.permReadReason, children: p.reason })
+        ] }, i)) })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.spacer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.footer, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$e.footerBtn, onClick: () => window.devtool.shell.showItemInFolder(pkg.dir), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(FolderIcon, {}),
+      t2("sidebar.showInFolder")
+    ] }) })
+  ] });
+}
+function LogoAvatar({ appDir, logo: logo2, onLogoChange }) {
+  const t2 = useT();
+  const [dataUrl, setDataUrl] = reactExports.useState(null);
+  const fileInputRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!logo2) {
+      setDataUrl(null);
+      return;
+    }
+    window.devtool.package.readImage(appDir, logo2).then(setDataUrl).catch(() => setDataUrl(null));
+  }, [appDir, logo2]);
+  const handlePick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const relPath = "assets/logo.webp";
+    const url = await fileToDataUrl(file);
+    await window.devtool.package.saveImageFile(appDir, relPath, url);
+    setDataUrl(url);
+    onLogoChange(relPath);
+    e.target.value = "";
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.logoAvatar, onClick: () => fileInputRef.current?.click(), title: t2("sidebar.clickToChange"), children: [
+    dataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: dataUrl, alt: "logo", className: styles$e.logoImg }) : /* @__PURE__ */ jsxRuntimeExports.jsx(AppIconSvg, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.logoOverlay, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CameraIcon, {}) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", style: { display: "none" }, onChange: handlePick })
+  ] });
+}
+function MediaEditor({
+  appDir,
+  manifestImages,
+  onImagesChange,
+  t: t2
+}) {
+  const [files, setFiles] = reactExports.useState([]);
+  const filesRef = reactExports.useRef([]);
+  filesRef.current = files;
+  const [dataUrls, setDataUrls] = reactExports.useState({});
+  const [initialized, setInitialized] = reactExports.useState(false);
+  const dragIndexRef = reactExports.useRef(-1);
+  const [dragOverIndex, setDragOverIndex] = reactExports.useState(-1);
+  const fileInputRef = reactExports.useRef(null);
+  const discover = reactExports.useCallback(async () => {
+    const result = [];
+    for (const n of ["cover.png", "cover.jpg", "cover.jpeg", "cover.webp"]) {
+      const url = await window.devtool.package.readImage(appDir, `assets/${n}`);
+      if (url) {
+        result.push(`assets/${n}`);
+        break;
+      }
+    }
+    if (result.length === 0) {
+      const loose = await window.devtool.package.listImages(appDir, "assets");
+      if (loose.length > 0) result.push(`assets/${loose[0]}`);
+    }
+    const carousel = await window.devtool.package.listImages(appDir, "assets/carousel");
+    for (const f of carousel) result.push(`assets/carousel/${f}`);
+    return result;
+  }, [appDir]);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    setInitialized(false);
+    (async () => {
+      const snapshot = manifestImages;
+      const paths = snapshot && snapshot.length > 0 ? snapshot : await discover();
+      const urls = {};
+      await Promise.all(paths.map(async (p) => {
+        const url = await window.devtool.package.readImage(appDir, p);
+        if (url) urls[p] = url;
+      }));
+      if (cancelled) return;
+      const valid2 = paths.filter((p) => urls[p]);
+      setFiles(valid2);
+      setDataUrls(urls);
+      setInitialized(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appDir]);
+  reactExports.useEffect(() => {
+    return window.devtool.package.onAssetsChanged(async (info2) => {
+      if (info2.appDir !== appDir) return;
+      if (info2.role === "logo") return;
+      const newPath = info2.relPath;
+      const url = await window.devtool.package.readImage(appDir, newPath);
+      if (!url) return;
+      const prev = filesRef.current;
+      let next;
+      if (info2.role === "cover") {
+        const idx = prev.findIndex((p) => p.startsWith("assets/cover."));
+        next = idx >= 0 ? prev.map((p, i) => i === idx ? newPath : p) : [newPath, ...prev];
+      } else {
+        next = prev.includes(newPath) ? prev : [...prev, newPath];
+      }
+      setDataUrls((d2) => ({ ...d2, [newPath]: url }));
+      setFiles(next);
+      onImagesChange(next);
+    });
+  }, [appDir, onImagesChange]);
+  const handleDragStart = (e, index2) => {
+    e.stopPropagation();
+    dragIndexRef.current = index2;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/x-internal", String(index2));
+  };
+  const handleDragOver = (e, index2) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIndex(index2);
+  };
+  const handleDrop = (e, dropIndex) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const from = dragIndexRef.current;
+    if (from < 0 || from === dropIndex) {
+      setDragOverIndex(-1);
+      return;
+    }
+    const next = [...files];
+    const [moved] = next.splice(from, 1);
+    next.splice(dropIndex, 0, moved);
+    setFiles(next);
+    onImagesChange(next);
+    dragIndexRef.current = -1;
+    setDragOverIndex(-1);
+  };
+  const handleDragEnd = (e) => {
+    e.stopPropagation();
+    dragIndexRef.current = -1;
+    setDragOverIndex(-1);
+  };
+  const handleAdd = () => {
+    fileInputRef.current?.click();
+  };
+  const handleFileInputChange = async (e) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const nextFiles = [...files];
+    const nextUrls = { ...dataUrls };
+    for (const file of Array.from(fileList)) {
+      const webpName = file.name.replace(/\.[^.]+$/, ".webp");
+      const rel = `assets/carousel/${webpName}`;
+      const url = await fileToDataUrl(file);
+      await window.devtool.package.saveImageFile(appDir, rel, url);
+      nextUrls[rel] = url;
+      if (!nextFiles.includes(rel)) nextFiles.push(rel);
+    }
+    setFiles(nextFiles);
+    setDataUrls(nextUrls);
+    onImagesChange(nextFiles);
+    e.target.value = "";
+  };
+  const handleDelete2 = async (index2) => {
+    const path2 = files[index2];
+    try {
+      await window.devtool.package.deleteImageFile(appDir, path2);
+    } catch {
+    }
+    const nextFiles = files.filter((_2, i) => i !== index2);
+    const nextUrls = { ...dataUrls };
+    delete nextUrls[path2];
+    setFiles(nextFiles);
+    setDataUrls(nextUrls);
+    onImagesChange(nextFiles);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.mediaEditor, children: [
+    initialized && files.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.mediaEmpty, onClick: handleAdd, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ImageIcon, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: t2("sidebar.noCover") })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.mediaGrid, children: [
+      files.map((f, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: `${styles$e.mediaGridItem} ${dragOverIndex === i ? styles$e.mediaItemOver : ""}`,
+          draggable: true,
+          onDragStart: (e) => handleDragStart(e, i),
+          onDragOver: (e) => handleDragOver(e, i),
+          onDragLeave: (e) => {
+            e.stopPropagation();
+            setDragOverIndex(-1);
+          },
+          onDrop: (e) => handleDrop(e, i),
+          onDragEnd: handleDragEnd,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: dataUrls[f], alt: "", className: styles$e.mediaGridImg, draggable: false }),
+            i === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.coverBadge, children: t2("sidebar.coverBadge") }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.mediaItemDelete, onClick: () => handleDelete2(i), title: "Remove", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeleteIcon, {}) })
+          ]
+        },
+        f
+      )),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$e.mediaAddGridBtn, onClick: handleAdd, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.carouselAddPlus, children: "+" }) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        ref: fileInputRef,
+        type: "file",
+        accept: "image/*",
+        multiple: true,
+        style: { display: "none" },
+        onChange: handleFileInputChange
+      }
+    )
+  ] });
+}
+function FieldRow({ label: label2, value, onChange, mono: mono2 = false, multiline = false }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.fieldRow, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.fieldLabel, children: label2 }),
+    multiline ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "textarea",
+      {
+        className: `${styles$e.fieldInput} ${styles$e.fieldTextarea} ${mono2 ? styles$e.mono : ""}`,
+        value,
+        onChange: (e) => onChange(e.target.value),
+        rows: 2,
+        spellCheck: false
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        type: "text",
+        className: `${styles$e.fieldInput} ${mono2 ? styles$e.mono : ""}`,
+        value,
+        onChange: (e) => onChange(e.target.value),
+        spellCheck: false
+      }
+    )
+  ] });
+}
+function SidebarSection({ title: title2, badge: badge2, badgeVariant = "default", defaultOpen = true, children }) {
+  const [collapsed, setCollapsed] = reactExports.useState(!defaultOpen);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$e.section, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$e.sectionHeader, onClick: () => setCollapsed(!collapsed), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.sectionChevron, children: collapsed ? "▸" : "▾" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$e.sectionTitle, children: title2 }),
+      badge2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$e.badge} ${badgeVariant === "success" ? styles$e.badgeSuccess : badgeVariant === "warn" ? styles$e.badgeWarn : styles$e.badgeDefault}`, children: badge2 })
+    ] }),
+    !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$e.sectionBody, children })
+  ] });
+}
+function AppIconSvg() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 1024 1024", version: "1.1", xmlns: "http://www.w3.org/2000/svg", width: "26", height: "26", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M915.084916 719.854978 810.23287 719.854978 810.23287 614.985536c0-23.303752-17.479093-40.782845-40.782845-40.782845s-40.782845 17.479093-40.782845 40.782845l0 110.696148L612.144326 725.681684c-23.303752 0-40.782845 17.479093-40.782845 40.782845s17.479093 40.782845 40.782845 40.782845l110.696148 0 0 110.678752c0 23.303752 17.479093 40.782845 40.782845 40.782845s40.782845-17.479093 40.782845-40.782845L804.406165 807.247374 915.084916 807.247374c23.304775 0 40.782845-17.47807 40.782845-40.782845C961.694467 743.160777 938.390715 719.854978 915.084916 719.854978L915.084916 719.854978 915.084916 719.854978zM506.427586 825.749774 506.427586 825.749774 141.658835 825.749774c-13.524015 0-23.675212-10.151197-23.675212-23.710005L117.983623 139.732461c0-13.533224 10.151197-23.684422 23.675212-23.684422l646.381593 0c13.505595 0 23.657816 10.151197 23.657816 23.684422l0 357.988324 0 0 0 0c0 13.524015 10.169617 23.676236 23.711028 23.676236 13.522991 0 23.675212-10.152221 23.675212-23.676236l0 0 0 0L859.084485 116.049063c0-27.073612-23.675212-50.759057-50.758034-50.759057L117.9826 65.290005c-27.065426 0-50.758034 23.685445-50.758034 50.759057L67.224566 825.749774c0 27.048029 23.692608 50.740638 50.758034 50.740638L506.427586 876.490412l0 0c13.522991 0 23.675212-10.169617 23.675212-23.692608C530.101775 835.883575 519.949554 825.749774 506.427586 825.749774L506.427586 825.749774 506.427586 825.749774zM501.447155 708.202591c17.479093-34.95614 58.261938-58.261938 99.044784-58.261938l46.608527 0 0-52.43421c0-46.609551 29.131481-87.392396 69.913303-104.870466l0 0 0 0-58.260915-174.774559L454.838627 580.028373l-58.261938-93.218078L181.028495 708.202591 501.447155 708.202591 501.447155 708.202591 501.447155 708.202591zM396.577712 335.331301c0-34.94693-29.130458-64.078411-64.086597-64.078411s-64.087621 29.131481-64.087621 64.078411c0 34.957163 29.130458 64.087621 64.087621 64.087621S396.577712 370.288464 396.577712 335.331301L396.577712 335.331301 396.577712 335.331301zM396.577712 335.331301", fill: "white" }) });
+}
+function FolderIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "path",
+    {
+      d: "M1 2.5C1 2.22 1.22 2 1.5 2H4L5 3H10.5C10.78 3 11 3.22 11 3.5V9.5C11 9.78 10.78 10 10.5 10H1.5C1.22 10 1 9.78 1 9.5V2.5Z",
+      stroke: "currentColor",
+      strokeWidth: "1.1",
+      fill: "none",
+      strokeLinejoin: "round"
+    }
+  ) });
+}
+function CameraIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "path",
+      {
+        d: "M1 4.5C1 3.95 1.45 3.5 2 3.5h1.5l1-1.5h3l1 1.5H12c.55 0 1 .45 1 1v6c0 .55-.45 1-1 1H2c-.55 0-1-.45-1-1v-6z",
+        stroke: "currentColor",
+        strokeWidth: "1.2",
+        fill: "none",
+        strokeLinejoin: "round"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "7", r: "1.8", stroke: "currentColor", strokeWidth: "1.2" })
+  ] });
+}
+function ImageIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 20 20", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "2", width: "16", height: "16", rx: "2", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "7.5", r: "1.5", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 13l4-4 3 3 3-3 4 4", stroke: "currentColor", strokeWidth: "1.2", strokeLinejoin: "round" })
+  ] });
+}
+function DeleteIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 2l6 6M8 2l-6 6", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round" }) });
+}
+function SpinnerIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", className: styles$e.spinnerSvg, children: /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5", cy: "5", r: "3.5", stroke: "currentColor", strokeWidth: "1.5", strokeDasharray: "6 16" }) });
+}
+const useExtensionStore = create$1((set, get) => ({
+  extensions: [],
+  loading: false,
+  searchQuery: "",
+  icons: {},
+  setExtensions: (exts) => set({ extensions: exts }),
+  setLoading: (v2) => set({ loading: v2 }),
+  setSearchQuery: (q2) => set({ searchQuery: q2 }),
+  setIcon: (extensionId, dataUrl) => set((s) => ({
+    icons: dataUrl ? { ...s.icons, [extensionId]: dataUrl } : s.icons
+  })),
+  refresh: async () => {
+    set({ loading: true });
+    try {
+      const exts = await window.devtool.extensions.list();
+      set({ extensions: exts, loading: false });
+      for (const ext of exts) {
+        if (ext.icon) {
+          try {
+            const iconData = await window.devtool.extensions.getIcon(ext.id);
+            if (iconData) {
+              set((s) => ({
+                icons: { ...s.icons, [ext.id]: iconData }
+              }));
+            }
+          } catch {
+          }
+        }
+      }
+    } catch {
+      set({ loading: false });
+    }
+  },
+  install: async (vsixPath) => {
+    const ext = await window.devtool.extensions.install(vsixPath);
+    await get().refresh();
+    return ext;
+  },
+  installFromDialog: async () => {
+    const ext = await window.devtool.extensions.installFromDialog();
+    if (ext) {
+      await get().refresh();
+    }
+    return ext;
+  },
+  uninstall: async (extensionId) => {
+    await window.devtool.extensions.uninstall(extensionId);
+    await get().refresh();
+  },
+  toggleEnabled: async (extensionId, enabled) => {
+    await window.devtool.extensions.setEnabled(extensionId, enabled);
+    set((s) => ({
+      extensions: s.extensions.map(
+        (e) => e.id === extensionId ? { ...e, enabled } : e
+      )
+    }));
+  }
+}));
+const wrap$2 = "_wrap_10rz8_1";
+const header$4 = "_header_10rz8_21";
+const title$1 = "_title_10rz8_31";
+const searchBox = "_searchBox_10rz8_49";
+const searchIcon$1 = "_searchIcon_10rz8_59";
+const searchInput$1 = "_searchInput_10rz8_79";
+const actions = "_actions_10rz8_113";
+const actionBtn = "_actionBtn_10rz8_123";
+const list$5 = "_list_10rz8_175";
+const card = "_card_10rz8_191";
+const cardDisabled = "_cardDisabled_10rz8_213 _card_10rz8_191";
+const iconWrap = "_iconWrap_10rz8_223";
+const iconImg = "_iconImg_10rz8_245";
+const iconFallback = "_iconFallback_10rz8_255";
+const info$1 = "_info_10rz8_265";
+const infoRow = "_infoRow_10rz8_275";
+const displayName = "_displayName_10rz8_289";
+const version = "_version_10rz8_307";
+const publisher = "_publisher_10rz8_319";
+const description = "_description_10rz8_331";
+const meta = "_meta_10rz8_353";
+const badge = "_badge_10rz8_367";
+const badgeEnabled = "_badgeEnabled_10rz8_383 _badge_10rz8_367";
+const badgeDisabled = "_badgeDisabled_10rz8_395 _badge_10rz8_367";
+const detailOverlay = "_detailOverlay_10rz8_413";
+const detailHeader = "_detailHeader_10rz8_431";
+const backBtn$1 = "_backBtn_10rz8_449";
+const detailTitle = "_detailTitle_10rz8_481";
+const detailBody = "_detailBody_10rz8_493";
+const detailSection = "_detailSection_10rz8_505";
+const detailSectionTitle = "_detailSectionTitle_10rz8_513";
+const detailField = "_detailField_10rz8_529";
+const detailFieldLabel = "_detailFieldLabel_10rz8_545";
+const detailFieldValue = "_detailFieldValue_10rz8_557";
+const detailCommands = "_detailCommands_10rz8_569";
+const detailCommand = "_detailCommand_10rz8_569";
+const detailActions = "_detailActions_10rz8_599";
+const detailBtn = "_detailBtn_10rz8_615";
+const detailBtnDanger = "_detailBtnDanger_10rz8_649 _detailBtn_10rz8_615";
+const empty$4 = "_empty_10rz8_671";
+const emptyIcon$1 = "_emptyIcon_10rz8_691";
+const emptyText$1 = "_emptyText_10rz8_703";
+const emptyHint = "_emptyHint_10rz8_713";
+const dropOverlay = "_dropOverlay_10rz8_731";
+const dropText = "_dropText_10rz8_757";
+const loading$1 = "_loading_10rz8_773";
+const spinner = "_spinner_10rz8_795";
+const styles$d = {
+  wrap: wrap$2,
+  header: header$4,
+  title: title$1,
+  searchBox,
+  searchIcon: searchIcon$1,
+  searchInput: searchInput$1,
+  actions,
+  actionBtn,
+  list: list$5,
+  card,
+  cardDisabled,
+  iconWrap,
+  iconImg,
+  iconFallback,
+  info: info$1,
+  infoRow,
+  displayName,
+  version,
+  publisher,
+  description,
+  meta,
+  badge,
+  badgeEnabled,
+  badgeDisabled,
+  detailOverlay,
+  detailHeader,
+  backBtn: backBtn$1,
+  detailTitle,
+  detailBody,
+  detailSection,
+  detailSectionTitle,
+  detailField,
+  detailFieldLabel,
+  detailFieldValue,
+  detailCommands,
+  detailCommand,
+  detailActions,
+  detailBtn,
+  detailBtnDanger,
+  empty: empty$4,
+  emptyIcon: emptyIcon$1,
+  emptyText: emptyText$1,
+  emptyHint,
+  dropOverlay,
+  dropText,
+  loading: loading$1,
+  spinner
+};
+function PuzzleIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 24 24", width: "16", height: "16", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.611a2.404 2.404 0 0 1-1.705.706 2.404 2.404 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.931a2.5 2.5 0 1 1-1.974-3.561 2.5 2.5 0 0 1 4.859-.597c.18.427.182.904-.02 1.33-.205.435-.549.75-.98.928a2.5 2.5 0 1 0 1.386 4.808 2.5 2.5 0 0 0-.01-4.83c.434-.18.879-.188 1.33-.02.427.18.752.549.928.98a2.5 2.5 0 1 0 4.808-1.386 2.5 2.5 0 0 0-4.829.01c.188.434.188.879-.02 1.33-.18.427-.549.752-.98.928a2.5 2.5 0 1 0-1.386-4.808 2.5 2.5 0 0 0 .01 4.829c.435.18.88.188 1.33-.02.427-.18.75-.549.928-.98a2.5 2.5 0 1 0-4.808 1.386 2.5 2.5 0 0 0 4.829-.01z" }) });
+}
+function SearchIcon$1() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { viewBox: "0 0 24 24", width: "12", height: "12", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "11", cy: "11", r: "8" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 21l-4.3-4.3" })
+  ] });
+}
+function PlusIcon$2() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { viewBox: "0 0 24 24", width: "12", height: "12", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "5", x2: "12", y2: "19" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "5", y1: "12", x2: "19", y2: "12" })
+  ] });
+}
+function RefreshIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { viewBox: "0 0 24 24", width: "12", height: "12", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "23 4 23 10 17 10" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M20.49 15a9 9 0 1 1-2.12-9.36L23 10" })
+  ] });
+}
+function TrashIcon$1() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { viewBox: "0 0 24 24", width: "12", height: "12", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "3 6 5 6 21 6" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" })
+  ] });
+}
+function BackIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 24 24", width: "14", height: "14", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "15 18 9 12 15 6" }) });
+}
+function ExtensionCard({
+  ext,
+  iconDataUrl,
+  onClick
+}) {
+  const firstLetter = (ext.displayName || ext.name)[0]?.toUpperCase() ?? "?";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: ext.enabled ? styles$d.card : styles$d.cardDisabled,
+      onClick,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.iconWrap, children: iconDataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$d.iconImg, src: iconDataUrl, alt: "" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.iconFallback, children: firstLetter }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.info, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.infoRow, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.displayName, children: ext.displayName }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$d.version, children: [
+              "v",
+              ext.version
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.publisher, children: ext.publisher }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.description, children: ext.description }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.meta, children: [
+            ext.categories?.slice(0, 2).map((cat) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.badge, children: cat }, cat)),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: ext.enabled ? styles$d.badgeEnabled : styles$d.badgeDisabled, children: ext.enabled ? "Enabled" : "Disabled" })
+          ] })
+        ] })
+      ]
+    }
+  );
+}
+function ExtensionDetail({
+  ext,
+  iconDataUrl,
+  onBack,
+  onToggle,
+  onUninstall
+}) {
+  const commands = [];
+  if (ext.contributes) {
+    const c2 = ext.contributes;
+    if (Array.isArray(c2.commands)) {
+      for (const cmd of c2.commands) {
+        commands.push({ command: cmd.command, title: cmd.title });
+      }
+    }
+  }
+  const firstLetter = (ext.displayName || ext.name)[0]?.toUpperCase() ?? "?";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailOverlay, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailHeader, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.backBtn, onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx(BackIcon, {}) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.iconWrap, children: iconDataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$d.iconImg, src: iconDataUrl, alt: "" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.iconFallback, children: firstLetter }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.info, style: { flex: 1, minWidth: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailTitle, children: ext.displayName }) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailBody, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailSectionTitle, children: "Details" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailField, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldLabel, children: "ID" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldValue, children: ext.id })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailField, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldLabel, children: "Version" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$d.detailFieldValue, children: [
+            "v",
+            ext.version
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailField, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldLabel, children: "Publisher" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldValue, children: ext.publisher })
+        ] }),
+        ext.engines?.vscode && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailField, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldLabel, children: "VS Code" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$d.detailFieldValue, children: [
+            "^",
+            ext.engines.vscode
+          ] })
+        ] }),
+        ext.main && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailField, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldLabel, children: "Entry" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.detailFieldValue, style: { fontFamily: "var(--font-mono)", fontSize: 10 }, children: ext.main })
+        ] })
+      ] }),
+      ext.description && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailSectionTitle, children: "Description" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }, children: ext.description })
+      ] }),
+      commands.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailSectionTitle, children: [
+          "Commands (",
+          commands.length,
+          ")"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailCommands, children: commands.map((cmd) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailCommand, children: [
+          cmd.title,
+          " — ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: cmd.command })
+        ] }, cmd.command)) })
+      ] }),
+      ext.activationEvents && ext.activationEvents.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailSection, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailSectionTitle, children: "Activation Events" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailCommands, children: ext.activationEvents.map((ev) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.detailCommand, children: /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: ev }) }, ev)) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.detailActions, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$d.detailBtn, onClick: onToggle, children: ext.enabled ? "Disable" : "Enable" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$d.detailBtnDanger, onClick: onUninstall, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(TrashIcon$1, {}),
+        " Uninstall"
+      ] })
+    ] })
+  ] });
+}
+function ExtensionsTab() {
+  const {
+    extensions,
+    loading: loading2,
+    searchQuery,
+    icons,
+    setSearchQuery,
+    refresh,
+    installFromDialog,
+    uninstall,
+    toggleEnabled
+  } = useExtensionStore();
+  const [selectedId, setSelectedId] = reactExports.useState(null);
+  const [dragOver, setDragOver] = reactExports.useState(false);
+  const wrapRef = reactExports.useRef(null);
+  reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const filtered = reactExports.useMemo(() => {
+    if (!searchQuery.trim()) return extensions;
+    const q2 = searchQuery.toLowerCase();
+    return extensions.filter(
+      (e) => e.displayName.toLowerCase().includes(q2) || e.name.toLowerCase().includes(q2) || e.publisher.toLowerCase().includes(q2) || e.description.toLowerCase().includes(q2) || e.id.toLowerCase().includes(q2) || e.categories?.some((c2) => c2.toLowerCase().includes(q2))
+    );
+  }, [extensions, searchQuery]);
+  const selected = selectedId ? extensions.find((e) => e.id === selectedId) : null;
+  const handleDragOver = reactExports.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) {
+      setDragOver(true);
+    }
+  }, []);
+  const handleDragLeave = reactExports.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }, []);
+  const handleDrop = reactExports.useCallback(
+    async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOver(false);
+      const files = Array.from(e.dataTransfer.files);
+      for (const file of files) {
+        if (file.name.endsWith(".vsix")) {
+          const filePath = window.devtool.fileUtils.getPathForFile(file);
+          try {
+            await window.devtool.extensions.install(filePath);
+          } catch {
+          }
+        }
+      }
+      await refresh();
+    },
+    [refresh]
+  );
+  const handleInstallClick = reactExports.useCallback(async () => {
+    await installFromDialog();
+  }, [installFromDialog]);
+  const handleToggleEnabled = reactExports.useCallback(
+    async (ext) => {
+      await toggleEnabled(ext.id, !ext.enabled);
+    },
+    [toggleEnabled]
+  );
+  const handleUninstall = reactExports.useCallback(
+    async (ext) => {
+      await uninstall(ext.id);
+      if (selectedId === ext.id) setSelectedId(null);
+    },
+    [uninstall, selectedId]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: wrapRef,
+      className: styles$d.wrap,
+      onDragOver: handleDragOver,
+      onDragLeave: handleDragLeave,
+      onDrop: handleDrop,
+      children: [
+        dragOver && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.dropOverlay, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.dropText, children: "Drop .vsix to install" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.header, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.title, children: "Extensions" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.searchBox, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$d.searchIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx(SearchIcon$1, {}) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: styles$d.searchInput,
+                type: "text",
+                placeholder: "Search extensions...",
+                value: searchQuery,
+                onChange: (e) => setSearchQuery(e.target.value)
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.actions, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$d.actionBtn, onClick: handleInstallClick, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon$2, {}),
+              " Install"
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$d.actionBtn, onClick: refresh, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshIcon, {}),
+              " Refresh"
+            ] })
+          ] })
+        ] }),
+        loading2 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.loading, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.spinner }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Loading extensions..." })
+        ] }) : filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$d.empty, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.emptyIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PuzzleIcon, {}) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.emptyText, children: searchQuery ? "No extensions match your search" : "No extensions installed" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.emptyHint, children: searchQuery ? "Try a different search term" : 'Click "Install" to add a .vsix extension, or drag & drop a .vsix file here' })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$d.list, children: filtered.map((ext) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ExtensionCard,
+          {
+            ext,
+            iconDataUrl: icons[ext.id],
+            onClick: () => setSelectedId(ext.id)
+          },
+          ext.id
+        )) }),
+        selected && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ExtensionDetail,
+          {
+            ext: selected,
+            iconDataUrl: icons[selected.id],
+            onBack: () => setSelectedId(null),
+            onToggle: () => handleToggleEnabled(selected),
+            onUninstall: () => handleUninstall(selected)
+          }
+        )
+      ]
+    }
+  );
+}
+const panel$1 = "_panel_n7hpc_1";
+const tabBar = "_tabBar_n7hpc_25";
+const tab$1 = "_tab_n7hpc_25";
+const tabActive = "_tabActive_n7hpc_85 _tab_n7hpc_25";
+const content$3 = "_content_n7hpc_109";
+const branchGraphWrap = "_branchGraphWrap_n7hpc_259";
+const branchGraphList = "_branchGraphList_n7hpc_271";
+const graphRow = "_graphRow_n7hpc_285";
+const graphRowActive = "_graphRowActive_n7hpc_287";
+const graphRowRelated = "_graphRowRelated_n7hpc_289";
+const graphBranchHeader = "_graphBranchHeader_n7hpc_315";
+const graphBranchDot = "_graphBranchDot_n7hpc_341";
+const graphBranchDotActive = "_graphBranchDotActive_n7hpc_343";
+const graphBranchDotRelated = "_graphBranchDotRelated_n7hpc_345";
+const graphBranchName = "_graphBranchName_n7hpc_377";
+const graphCurrentBadge = "_graphCurrentBadge_n7hpc_395";
+const graphNodeChain = "_graphNodeChain_n7hpc_417";
+const graphNodeEmpty = "_graphNodeEmpty_n7hpc_425";
+const graphNode = "_graphNode_n7hpc_417";
+const graphNodeConnector = "_graphNodeConnector_n7hpc_459";
+const graphNodeLine = "_graphNodeLine_n7hpc_477";
+const graphNodeDot = "_graphNodeDot_n7hpc_493";
+const graphNodeDotTip = "_graphNodeDotTip_n7hpc_495";
+const graphNodeDotHead = "_graphNodeDotHead_n7hpc_497";
+const graphNodeContent = "_graphNodeContent_n7hpc_551";
+const graphNodeContentSelected = "_graphNodeContentSelected_n7hpc_625 _graphNodeContent_n7hpc_551";
+const graphNodeContentHead = "_graphNodeContentHead_n7hpc_643 _graphNodeContent_n7hpc_551";
+const graphNodeHeadBadge = "_graphNodeHeadBadge_n7hpc_689";
+const graphNodeMsg = "_graphNodeMsg_n7hpc_719";
+const graphNodeCheckpoint = "_graphNodeCheckpoint_n7hpc_739";
+const graphNodeMeta = "_graphNodeMeta_n7hpc_747";
+const graphNodeFileCount = "_graphNodeFileCount_n7hpc_759";
+const empty$3 = "_empty_n7hpc_773";
+const emptyIcon = "_emptyIcon_n7hpc_795";
+const styles$c = {
+  panel: panel$1,
+  tabBar,
+  tab: tab$1,
+  tabActive,
+  content: content$3,
+  branchGraphWrap,
+  branchGraphList,
+  graphRow,
+  graphRowActive,
+  graphRowRelated,
+  graphBranchHeader,
+  graphBranchDot,
+  graphBranchDotActive,
+  graphBranchDotRelated,
+  graphBranchName,
+  graphCurrentBadge,
+  graphNodeChain,
+  graphNodeEmpty,
+  graphNode,
+  graphNodeConnector,
+  graphNodeLine,
+  graphNodeDot,
+  graphNodeDotTip,
+  graphNodeDotHead,
+  graphNodeContent,
+  graphNodeContentSelected,
+  graphNodeContentHead,
+  graphNodeHeadBadge,
+  graphNodeMsg,
+  graphNodeCheckpoint,
+  graphNodeMeta,
+  graphNodeFileCount,
+  empty: empty$3,
+  emptyIcon
+};
+function ProjectIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 1024 1024", width: "20", height: "20", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M808.1 142.3h-99.9v-37c0-4.1-3.3-7.4-7.4-7.4H649c-4.1 0-7.4 3.3-7.4 7.4v37H501v-37c0-4.1-3.3-7.4-7.4-7.4h-51.8c-4.1 0-7.4 3.3-7.4 7.4v37h-99.9c-16.4 0-29.6 13.2-29.6 29.6v111h-88.8c-16.4 0-29.6 13.2-29.6 29.6v584.6c0 16.4 13.2 29.6 29.6 29.6h473.6c16.4 0 29.6-13.2 29.6-29.6v-88.8h88.8c16.4 0 29.6-13.2 29.6-29.6V171.9c0-16.3-13.2-29.6-29.6-29.6zM652.7 860.1H253.1V349.5h201.6v160.9c0 20.4 16.6 37 37 37h160.9v312.7z m0-371.8H513.9V349.5h0.2l138.6 138.6v0.2z m118.4 253.4h-51.8V460.5L541.7 282.9H371.5v-74h62.9v29.6c0 4.1 3.3 7.4 7.4 7.4h51.8c4.1 0 7.4-3.3 7.4-7.4v-29.6h140.6v29.6c0 4.1 3.3 7.4 7.4 7.4h51.8c4.1 0 7.4-3.3 7.4-7.4v-29.6h62.9v532.8z" }) });
+}
+function BranchIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 1024 1024", width: "20", height: "20", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M303.146667 648.96A128.042667 128.042667 0 1 1 213.333333 647.253333V376.746667a128.042667 128.042667 0 1 1 85.333334 0V512c35.669333-26.794667 79.957333-42.666667 128-42.666667h170.666666a128.042667 128.042667 0 0 0 123.52-94.293333 128.042667 128.042667 0 1 1 86.698667 2.730667A213.418667 213.418667 0 0 1 597.333333 554.666667h-170.666666a128.042667 128.042667 0 0 0-123.52 94.293333zM256 725.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM256 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z m512 0a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z" }) });
+}
+function ExtensionIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 24 24", width: "20", height: "20", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.611a2.404 2.404 0 0 1-1.705.706 2.404 2.404 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.931a2.5 2.5 0 1 1-1.974-3.561 2.5 2.5 0 0 1 4.859-.597c.18.427.182.904-.02 1.33-.205.435-.549.75-.98.928a2.5 2.5 0 1 0 1.386 4.808 2.5 2.5 0 0 0-.01-4.83c.434-.18.879-.188 1.33-.02.427.18.752.549.928.98a2.5 2.5 0 1 0 4.808-1.386 2.5 2.5 0 0 0-4.829.01c.188.434.188.879-.02 1.33-.18.427-.549.752-.98.928a2.5 2.5 0 1 0-1.386-4.808 2.5 2.5 0 0 0 .01 4.829c.435.18.88.188 1.33-.02.427-.18.75-.549.928-.98a2.5 2.5 0 1 0-4.808 1.386 2.5 2.5 0 0 0 4.829-.01z" }) });
+}
+function LeftPanel({ width = 290 }) {
+  const t2 = useT();
+  const [tab2, setTab] = reactExports.useState("project");
+  const pkg = usePackageStore((s) => s.current);
+  const { branches, currentBranch, switchBranch, fullRefresh, loading: loading2, graphNodes, selectedOid, restoreNode } = useGitStore();
+  reactExports.useEffect(() => {
+    if (pkg?.dir) {
+      fullRefresh(pkg.dir);
+    }
+  }, [pkg?.dir, fullRefresh]);
+  const handleSwitchBranch = reactExports.useCallback(
+    (name2) => {
+      if (!pkg) return;
+      switchBranch(pkg.dir, name2);
+    },
+    [pkg, switchBranch]
+  );
+  const handleRestoreNode = reactExports.useCallback(
+    (oid) => {
+      if (!pkg) return;
+      restoreNode(pkg.dir, oid);
+    },
+    [pkg, restoreNode]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.panel, style: { width }, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.tabBar, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: tab2 === "project" ? styles$c.tabActive : styles$c.tab,
+          onClick: () => setTab("project"),
+          title: t2("leftPanel.projectDesc"),
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProjectIcon, {})
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: tab2 === "branches" ? styles$c.tabActive : styles$c.tab,
+          onClick: () => setTab("branches"),
+          title: t2("leftPanel.branchesDesc"),
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(BranchIcon, {})
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: tab2 === "extensions" ? styles$c.tabActive : styles$c.tab,
+          onClick: () => setTab("extensions"),
+          title: t2("leftPanel.extensionsDesc"),
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionIcon, {})
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.content, children: tab2 === "project" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}) : tab2 === "extensions" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsTab, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+      BranchInfo,
+      {
+        branches,
+        currentBranch,
+        loading: loading2,
+        graphNodes,
+        selectedOid,
+        onSwitchBranch: handleSwitchBranch,
+        onRestoreNode: handleRestoreNode,
+        t: t2
+      }
+    ) })
+  ] });
+}
+function BranchInfo({
+  branches,
+  currentBranch,
+  loading: loading2,
+  graphNodes,
+  selectedOid,
+  onSwitchBranch,
+  onRestoreNode,
+  t: t2
+}) {
+  if (branches.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.empty, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.emptyIcon, children: "🔀" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: t2("leftPanel.noBranches") })
+    ] });
+  }
+  const visibleBranches = branches.filter((b) => b.name !== "main");
+  const headOid = branches.find((b) => b.isCurrent)?.tipOid ?? null;
+  if (visibleBranches.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.empty, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.emptyIcon, children: "🔀" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: t2("leftPanel.noBranches") })
+    ] });
+  }
+  const branchNodeMap = /* @__PURE__ */ new Map();
+  for (const br of visibleBranches) {
+    const nodes = graphNodes.filter(
+      (n) => n.branches.some((b) => b.name === br.name)
+    );
+    branchNodeMap.set(br.name, nodes);
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.branchGraphWrap, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.branchGraphList, children: visibleBranches.map((br) => {
+    const nodes = branchNodeMap.get(br.name) ?? [];
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      BranchGraphRow,
+      {
+        branch: br,
+        nodes,
+        isCurrent: br.isCurrent,
+        headOid,
+        selectedOid,
+        onSwitchBranch,
+        onRestoreNode,
+        t: t2
+      },
+      br.name
+    );
+  }) }) });
+}
+function BranchGraphRow({
+  branch,
+  nodes,
+  isCurrent,
+  headOid,
+  selectedOid,
+  onSwitchBranch,
+  onRestoreNode,
+  t: t2
+}) {
+  const containsSelected = selectedOid !== null && nodes.some((n) => n.oid === selectedOid);
+  const rowClass = isCurrent ? styles$c.graphRowActive : containsSelected ? styles$c.graphRowRelated : styles$c.graphRow;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: rowClass, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: styles$c.graphBranchHeader,
+        onClick: () => !branch.isCurrent && onSwitchBranch(branch.name),
+        title: branch.isCurrent ? t2("git.currentBranch") : `${t2("git.switchBranch")}: ${branch.name}`,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: isCurrent ? styles$c.graphBranchDotActive : containsSelected ? styles$c.graphBranchDotRelated : styles$c.graphBranchDot }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.graphBranchName, children: branch.name }),
+          isCurrent && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.graphCurrentBadge, children: t2("git.currentBranch") })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.graphNodeChain, children: nodes.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.graphNodeEmpty, children: t2("git.noHistory") }) : nodes.map((node2, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      GraphNode,
+      {
+        node: node2,
+        isFirst: i === 0,
+        isLast: i === nodes.length - 1,
+        isHead: node2.oid === headOid,
+        isSelected: node2.oid === selectedOid,
+        onSelect: () => onRestoreNode(node2.oid),
+        t: t2
+      },
+      node2.oid
+    )) })
+  ] });
+}
+function GraphNode({
+  node: node2,
+  isFirst,
+  isLast,
+  isHead,
+  isSelected,
+  onSelect,
+  t: t2
+}) {
+  const timeStr = new Date(node2.committedAt).toLocaleString(void 0, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  const tooltip = `${node2.shortOid}  ${timeStr}${isHead ? `  [${t2("git.head")}]` : ""}
+${node2.message}`;
+  const contentClass = [
+    styles$c.graphNodeContent,
+    isSelected ? styles$c.graphNodeContentSelected : "",
+    isHead ? styles$c.graphNodeContentHead : ""
+  ].filter(Boolean).join(" ");
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.graphNode, onClick: onSelect, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.graphNodeConnector, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.graphNodeLine }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: isHead ? styles$c.graphNodeDotHead : isFirst ? styles$c.graphNodeDotTip : styles$c.graphNodeDot })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: contentClass, "data-tooltip": tooltip, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$c.graphNodeMsg, children: [
+        isHead && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$c.graphNodeHeadBadge, children: t2("git.head") }),
+        node2.checkpoint ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$c.graphNodeCheckpoint, title: t2("checkpoint.title"), children: [
+          "🤖 ",
+          node2.message.slice(0, 60),
+          node2.message.length > 60 ? "…" : ""
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          node2.message.slice(0, 60),
+          node2.message.length > 60 ? "…" : ""
+        ] })
+      ] }),
+      node2.checkpoint && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$c.graphNodeMeta, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$c.graphNodeFileCount, children: [
+        "📄 ",
+        node2.checkpoint.fileCount,
+        " ",
+        t2("checkpoint.files")
+      ] }) })
+    ] })
+  ] });
+}
+const overlay$3 = "_overlay_a22si_1";
+const modal$2 = "_modal_a22si_23";
 const header$3 = "_header_a22si_41";
 const closeBtn$3 = "_closeBtn_a22si_63";
 const body$4 = "_body_a22si_85";
-const section$1 = "_section_a22si_99";
-const sectionTitle$1 = "_sectionTitle_a22si_111";
-const field = "_field_a22si_127";
-const fieldLabel = "_fieldLabel_a22si_141";
-const select$1 = "_select_a22si_151";
+const section = "_section_a22si_99";
+const sectionTitle = "_sectionTitle_a22si_111";
+const field$1 = "_field_a22si_127";
+const fieldLabel$1 = "_fieldLabel_a22si_141";
+const select = "_select_a22si_151";
 const aboutRow = "_aboutRow_a22si_171";
 const aboutValue = "_aboutValue_a22si_183";
 const styles$b = {
-  overlay: overlay$2,
-  modal: modal$3,
+  overlay: overlay$3,
+  modal: modal$2,
   header: header$3,
   closeBtn: closeBtn$3,
   body: body$4,
-  section: section$1,
-  sectionTitle: sectionTitle$1,
-  field,
-  fieldLabel,
-  select: select$1,
+  section,
+  sectionTitle,
+  field: field$1,
+  fieldLabel: fieldLabel$1,
+  select,
   aboutRow,
   aboutValue
 };
@@ -11044,8 +14570,8 @@ function SettingsModal({ onClose }) {
     ] })
   ] }) });
 }
-const overlay$1 = "_overlay_18vai_1";
-const modal$2 = "_modal_18vai_23";
+const overlay$2 = "_overlay_18vai_1";
+const modal$1 = "_modal_18vai_23";
 const header$2 = "_header_18vai_49";
 const logo = "_logo_18vai_63";
 const headerText = "_headerText_18vai_77";
@@ -11059,8 +14585,8 @@ const loading = "_loading_18vai_179";
 const footer$1 = "_footer_18vai_195";
 const okBtn = "_okBtn_18vai_207";
 const styles$a = {
-  overlay: overlay$1,
-  modal: modal$2,
+  overlay: overlay$2,
+  modal: modal$1,
   header: header$2,
   logo,
   headerText,
@@ -11084,7 +14610,7 @@ function AboutModal({ onClose }) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$a.header, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$a.logo, src: logoPng, alt: "Shapp" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$a.headerText, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$a.appName, children: info2?.name ?? "Shapp DevTool" }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$a.closeBtn, onClick: onClose, "aria-label": t2("common.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon, {}) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$a.closeBtn, onClick: onClose, "aria-label": t2("common.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon$1, {}) })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$a.body, children: info2 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(InfoRow, { label: t2("about.version"), value: info2.version }),
@@ -11103,173 +14629,11 @@ function InfoRow({ label: label2, value }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$a.rowValue, children: value })
   ] });
 }
-function CloseIcon() {
+function CloseIcon$1() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "2.5", y1: "2.5", x2: "9.5", y2: "9.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "9.5", y1: "2.5", x2: "2.5", y2: "9.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
   ] });
-}
-const backdrop = "_backdrop_smkdx_1";
-const modal$1 = "_modal_smkdx_21";
-const header$1 = "_header_smkdx_39";
-const title$1 = "_title_smkdx_53";
-const closeBtn$1 = "_closeBtn_smkdx_67";
-const body$2 = "_body_smkdx_97";
-const section = "_section_smkdx_111";
-const sectionTitle = "_sectionTitle_smkdx_123";
-const hint = "_hint_smkdx_141";
-const label = "_label_smkdx_153";
-const input = "_input_smkdx_165";
-const select = "_select_smkdx_167";
-const saveBtn = "_saveBtn_smkdx_199";
-const styles$9 = {
-  backdrop,
-  modal: modal$1,
-  header: header$1,
-  title: title$1,
-  closeBtn: closeBtn$1,
-  body: body$2,
-  section,
-  sectionTitle,
-  hint,
-  label,
-  input,
-  select,
-  saveBtn
-};
-function AgentSettingsModal({ onClose }) {
-  const t2 = useT();
-  const providers = useAgentStore((s) => s.providers);
-  const selectedProvider = useAgentStore((s) => s.selectedProvider);
-  const selectedModel = useAgentStore((s) => s.selectedModel);
-  const setModel = useAgentStore((s) => s.setModel);
-  const [providerInput, setProviderInput] = reactExports.useState(selectedProvider);
-  const [modelInput, setModelInput] = reactExports.useState(selectedModel);
-  const [apiKeyProvider, setApiKeyProvider] = reactExports.useState(selectedProvider);
-  const [apiKey, setApiKey] = reactExports.useState("");
-  const [saving, setSaving] = reactExports.useState(false);
-  const [saved, setSaved] = reactExports.useState(false);
-  reactExports.useEffect(() => {
-    const handler = (e) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-  const handleSaveModel = () => {
-    setModel(providerInput.trim() || selectedProvider, modelInput.trim() || selectedModel);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  };
-  const handleSaveApiKey = async () => {
-    if (!apiKey.trim()) return;
-    setSaving(true);
-    try {
-      await window.devtool.agent.setApiKey(apiKeyProvider.trim(), apiKey.trim());
-      setApiKey("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
-  const activeProvider = providers.find((p) => p.id === providerInput);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.backdrop, onMouseDown: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.modal, onMouseDown: (e) => e.stopPropagation(), children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.header, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$9.title, children: t2("agent.settings") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$9.closeBtn, onClick: onClose, children: "✕" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.body, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: styles$9.section, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.sectionTitle, children: t2("agentSettings.modelConfig") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$9.label, children: t2("agentSettings.providerId") }),
-        providers.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "select",
-          {
-            className: styles$9.select,
-            value: providerInput,
-            onChange: (e) => {
-              setProviderInput(e.target.value);
-              setModelInput("");
-            },
-            children: providers.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: p.id, children: p.name || p.id }, p.id))
-          }
-        ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            className: styles$9.input,
-            value: providerInput,
-            onChange: (e) => setProviderInput(e.target.value),
-            placeholder: "anthropic"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$9.label, style: { marginTop: 10 }, children: t2("agentSettings.modelId") }),
-        activeProvider && activeProvider.models.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "select",
-          {
-            className: styles$9.select,
-            value: modelInput,
-            onChange: (e) => setModelInput(e.target.value),
-            children: activeProvider.models.map((m) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: m.id, children: m.name || m.id }, m.id))
-          }
-        ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            className: styles$9.input,
-            value: modelInput,
-            onChange: (e) => setModelInput(e.target.value),
-            placeholder: "claude-opus-4-5"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$9.saveBtn, onClick: handleSaveModel, children: saved ? t2("agentSettings.saved") : t2("agentSettings.saveModel") })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: styles$9.section, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.sectionTitle, children: "API Key" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.hint, children: t2("agentSettings.keyHint") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$9.label, children: t2("agentSettings.provider") }),
-        providers.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "select",
-          {
-            className: styles$9.select,
-            value: apiKeyProvider,
-            onChange: (e) => setApiKeyProvider(e.target.value),
-            children: providers.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: p.id, children: p.name || p.id }, p.id))
-          }
-        ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            className: styles$9.input,
-            value: apiKeyProvider,
-            onChange: (e) => setApiKeyProvider(e.target.value),
-            placeholder: "anthropic"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$9.label, style: { marginTop: 10 }, children: "API Key" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            className: styles$9.input,
-            type: "password",
-            value: apiKey,
-            onChange: (e) => setApiKey(e.target.value),
-            placeholder: "sk-ant-...",
-            autoComplete: "off"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: styles$9.saveBtn,
-            onClick: handleSaveApiKey,
-            disabled: saving || !apiKey.trim(),
-            children: saving ? t2("common.saving") : saved ? t2("agentSettings.saved") : t2("agentSettings.saveKey")
-          }
-        )
-      ] })
-    ] })
-  ] }) });
 }
 const toolbar$1 = "_toolbar_i1gbq_1";
 const newBtn = "_newBtn_i1gbq_23";
@@ -11283,8 +14647,7 @@ const dropItemBody = "_dropItemBody_i1gbq_183";
 const dropItemTitle = "_dropItemTitle_i1gbq_197";
 const dropItemTime = "_dropItemTime_i1gbq_207";
 const dropItemDelete = "_dropItemDelete_i1gbq_231";
-const settingsBtn = "_settingsBtn_i1gbq_267";
-const styles$8 = {
+const styles$9 = {
   toolbar: toolbar$1,
   newBtn,
   sessionDropdown,
@@ -11296,8 +14659,7 @@ const styles$8 = {
   dropItemBody,
   dropItemTitle,
   dropItemTime,
-  dropItemDelete,
-  settingsBtn
+  dropItemDelete
 };
 function AgentToolbar() {
   const t2 = useT();
@@ -11309,7 +14671,6 @@ function AgentToolbar() {
   const deleteSession = useAgentStore((s) => s.deleteSession);
   const setActiveSession = useAgentStore((s) => s.setActiveSession);
   const [dropOpen, setDropOpen] = reactExports.useState(false);
-  const [settingsOpen, setSettingsOpen] = reactExports.useState(false);
   const dropRef = reactExports.useRef(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   reactExports.useEffect(() => {
@@ -11332,39 +14693,36 @@ function AgentToolbar() {
   const handleDelete2 = async (e, id) => {
     e.stopPropagation();
     await deleteSession(id);
-    setDropOpen(false);
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.toolbar, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$8.newBtn, onClick: handleNew, title: t2("agent.newChatTitle"), children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.toolbar, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$9.newBtn, onClick: handleNew, title: t2("agent.newChatTitle"), children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon$1, {}),
       t2("agent.newChat")
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.sessionDropdown, ref: dropRef, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$8.sessionBtn, onClick: () => setDropOpen(!dropOpen), children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.sessionLabel, children: activeSession?.title ?? t2("agent.newChat") }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.sessionDropdown, ref: dropRef, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$9.sessionBtn, onClick: () => setDropOpen(!dropOpen), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$9.sessionLabel, children: activeSession?.title || t2("agent.newChat") }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon$1, {})
       ] }),
-      dropOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.dropMenu, children: [
-        sessions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.dropItem, style: { color: "var(--text-tertiary)", cursor: "default" }, children: t2("agent.noHistory") }),
+      dropOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.dropMenu, children: [
+        sessions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.dropItem, style: { color: "var(--text-tertiary)", cursor: "default" }, children: t2("agent.noHistory") }),
         sessions.map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: `${styles$8.dropItem} ${s.id === activeSessionId ? styles$8.dropItemActive : ""}`,
+            className: `${styles$9.dropItem} ${s.id === activeSessionId ? styles$9.dropItemActive : ""}`,
             onClick: () => handleSelect(s.id),
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.dropItemBody, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.dropItemTitle, children: s.title }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.dropItemTime, children: formatTime(s.createdAt, lang) })
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$9.dropItemBody, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$9.dropItemTitle, children: s.title || t2("agent.newChat") }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$9.dropItemTime, children: formatTime(s.createdAt, lang) })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.dropItemDelete, onClick: (e) => handleDelete2(e, s.id), role: "button", title: t2("agent.deleteChat"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(TrashIcon, {}) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$9.dropItemDelete, onClick: (e) => handleDelete2(e, s.id), role: "button", title: t2("agent.deleteChat"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(TrashIcon, {}) })
             ]
           },
           s.id
         ))
       ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$8.settingsBtn, onClick: () => setSettingsOpen(true), title: t2("agent.settings"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsIcon, {}) }),
-    settingsOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(AgentSettingsModal, { onClose: () => setSettingsOpen(false) })
+    ] })
   ] });
 }
 function formatTime(ts2, lang) {
@@ -11384,18 +14742,6 @@ function PlusIcon$1() {
 function ChevronIcon$1() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", style: { flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2.5 3.5L5 6.5L7.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) });
 }
-function SettingsIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "15", height: "15", viewBox: "0 0 15 15", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "path",
-    {
-      d: "M7.5 9.5a2 2 0 100-4 2 2 0 000 4zM12.4 8.3a5 5 0 00.1-.8 5 5 0 00-.1-.8l1.7-1.3a.4.4 0 00.1-.5l-1.6-2.7a.4.4 0 00-.5-.1l-2 .8a5.1 5.1 0 00-1.4-.8L8.4.6A.4.4 0 008 .3H4.8a.4.4 0 00-.4.3l-.3 2.1a5.1 5.1 0 00-1.4.8l-2-.8a.4.4 0 00-.5.1L.4 5.4a.4.4 0 00.1.5l1.7 1.3a5.2 5.2 0 000 1.6L.5 10.1a.4.4 0 00-.1.5l1.6 2.7a.4.4 0 00.5.1l2-.8c.4.3.9.6 1.4.8l.3 2.1c0 .2.2.3.4.3H8c.2 0 .4-.1.4-.3l.3-2.1a5 5 0 001.4-.8l2 .8c.2.1.4 0 .5-.1l1.6-2.7a.4.4 0 00-.1-.5l-1.7-1.3z",
-      stroke: "currentColor",
-      strokeWidth: "1.1",
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    }
-  ) });
-}
 function TrashIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
     "path",
@@ -11414,28 +14760,28 @@ function unreachable() {
 }
 function parse$2(value) {
   const tokens = [];
-  const input2 = String(value || "");
-  let index2 = input2.indexOf(",");
+  const input = String(value || "");
+  let index2 = input.indexOf(",");
   let start = 0;
   let end = false;
   while (!end) {
     if (index2 === -1) {
-      index2 = input2.length;
+      index2 = input.length;
       end = true;
     }
-    const token = input2.slice(start, index2).trim();
+    const token = input.slice(start, index2).trim();
     if (token || !end) {
       tokens.push(token);
     }
     start = index2 + 1;
-    index2 = input2.indexOf(",", start);
+    index2 = input.indexOf(",", start);
   }
   return tokens;
 }
 function stringify$2(values, options) {
   const settings = {};
-  const input2 = values[values.length - 1] === "" ? [...values, ""] : values;
-  return input2.join(
+  const input = values[values.length - 1] === "" ? [...values, ""] : values;
+  return input.join(
     (settings.padRight ? " " : "") + "," + (settings.padLeft === false ? "" : " ")
   ).trim();
 }
@@ -12670,8 +16016,8 @@ function camelcase($0) {
 const html$2 = merge([aria, html$3, xlink, xmlns, xml], "html");
 const svg = merge([aria, svg$1, xlink, xmlns, xml], "svg");
 function parse$1(value) {
-  const input2 = String(value || "").trim();
-  return input2 ? input2.split(/[ \t\n\r\f]+/g) : [];
+  const input = String(value || "").trim();
+  return input ? input.split(/[ \t\n\r\f]+/g) : [];
 }
 function stringify$1(values) {
   return values.join(" ").trim();
@@ -14426,9 +17772,9 @@ function tokenizeCodeFenced(effects, ok2, nok) {
     effects.enter("chunkString", {
       contentType: "string"
     });
-    return meta(code2);
+    return meta2(code2);
   }
-  function meta(code2) {
+  function meta2(code2) {
     if (code2 === null || markdownLineEnding(code2)) {
       effects.exit("chunkString");
       effects.exit("codeFencedFenceMeta");
@@ -14438,7 +17784,7 @@ function tokenizeCodeFenced(effects, ok2, nok) {
       return nok(code2);
     }
     effects.consume(code2);
-    return meta;
+    return meta2;
   }
   function atNonLazyBreak(code2) {
     return effects.attempt(closeStart, after, contentBefore)(code2);
@@ -16600,7 +19946,7 @@ function tokenizeThematicBreak(effects, ok2, nok) {
     return markdownSpace(code2) ? factorySpace(effects, atBreak, "whitespace")(code2) : atBreak(code2);
   }
 }
-const list$3 = {
+const list$4 = {
   continuation: {
     tokenize: tokenizeListContinuation
   },
@@ -16706,7 +20052,7 @@ function tokenizeListContinuation(effects, ok2, nok) {
   function notInCurrentItem(code2) {
     self2.containerState._closeFlow = true;
     self2.interrupt = void 0;
-    return factorySpace(effects, effects.attempt(list$3, ok2, nok), "linePrefix", self2.parser.constructs.disable.null.includes("codeIndented") ? void 0 : 4)(code2);
+    return factorySpace(effects, effects.attempt(list$4, ok2, nok), "linePrefix", self2.parser.constructs.disable.null.includes("codeIndented") ? void 0 : 4)(code2);
   }
 }
 function tokenizeIndent$1(effects, ok2, nok) {
@@ -16992,19 +20338,19 @@ function resolveAllLineSuffixes(events, context) {
   return events;
 }
 const document$1 = {
-  [42]: list$3,
-  [43]: list$3,
-  [45]: list$3,
-  [48]: list$3,
-  [49]: list$3,
-  [50]: list$3,
-  [51]: list$3,
-  [52]: list$3,
-  [53]: list$3,
-  [54]: list$3,
-  [55]: list$3,
-  [56]: list$3,
-  [57]: list$3,
+  [42]: list$4,
+  [43]: list$4,
+  [45]: list$4,
+  [48]: list$4,
+  [49]: list$4,
+  [50]: list$4,
+  [51]: list$4,
+  [52]: list$4,
+  [53]: list$4,
+  [54]: list$4,
+  [55]: list$4,
+  [56]: list$4,
+  [57]: list$4,
   [62]: blockQuote
 };
 const contentInitial = {
@@ -18431,7 +21777,7 @@ function link$1(state, node2) {
   state.patch(node2, result);
   return state.applyData(node2, result);
 }
-function listItem$1(state, node2, parent) {
+function listItem$2(state, node2, parent) {
   const results = state.all(node2);
   const loose = parent ? listLoose(parent) : listItemLoose(node2);
   const properties2 = {};
@@ -18492,7 +21838,7 @@ function listItemLoose(node2) {
   const spread = node2.spread;
   return spread === null || spread === void 0 ? node2.children.length > 1 : spread;
 }
-function list$2(state, node2) {
+function list$3(state, node2) {
   const properties2 = {};
   const results = state.all(node2);
   let index2 = -1;
@@ -18685,8 +22031,8 @@ const handlers = {
   inlineCode: inlineCode$1,
   linkReference: linkReference$1,
   link: link$1,
-  listItem: listItem$1,
-  list: list$2,
+  listItem: listItem$2,
+  list: list$3,
   paragraph: paragraph$1,
   // @ts-expect-error: root is different, but hard to type.
   root: root$4,
@@ -19699,13 +23045,13 @@ function extname(path2) {
   }
   return path2.slice(startDot, end);
 }
-function join(...segments) {
+function join(...segments2) {
   let index2 = -1;
   let joined;
-  while (++index2 < segments.length) {
-    assertPath$1(segments[index2]);
-    if (segments[index2]) {
-      joined = joined === void 0 ? segments[index2] : joined + "/" + segments[index2];
+  while (++index2 < segments2.length) {
+    assertPath$1(segments2[index2]);
+    if (segments2[index2]) {
+      joined = joined === void 0 ? segments2[index2] : joined + "/" + segments2[index2];
     }
   }
   return joined === void 0 ? "." : normalize(joined);
@@ -22293,7 +25639,7 @@ function checkRule(state) {
   }
   return marker;
 }
-function list$1(node2, parent, state, info2) {
+function list$2(node2, parent, state, info2) {
   const exit2 = state.enter("list");
   const bulletCurrent = state.bulletCurrent;
   let bullet = node2.ordered ? checkBulletOrdered(state) : checkBullet(state);
@@ -22340,7 +25686,7 @@ function checkListItemIndent(state) {
   }
   return style2;
 }
-function listItem(node2, parent, state, info2) {
+function listItem$1(node2, parent, state, info2) {
   const listItemIndent = checkListItemIndent(state);
   let bullet = state.bulletCurrent || checkBullet(state);
   if (parent && parent.type === "list" && parent.ordered) {
@@ -22485,8 +25831,8 @@ const handle = {
   inlineCode,
   link,
   linkReference,
-  list: list$1,
-  listItem,
+  list: list$2,
+  listItem: listItem$1,
   paragraph,
   root: root$3,
   strong,
@@ -39553,11 +42899,11 @@ function naniscript(Prism2) {
         }
       });
     });
-    function isBracketsBalanced(input2) {
+    function isBracketsBalanced(input) {
       var brackets = "[]{}";
       var stack = [];
-      for (var i = 0; i < input2.length; i++) {
-        var bracket = input2[i];
+      for (var i = 0; i < input.length; i++) {
+        var bracket = input[i];
         var bracketsIndex = brackets.indexOf(bracket);
         if (bracketsIndex !== -1) {
           if (bracketsIndex % 2 === 0) {
@@ -47168,48 +50514,60 @@ const vscDarkPlus = {
     "zIndex": "0"
   }
 };
-const list = "_list_72gsn_1";
-const empty = "_empty_72gsn_21";
-const emptyText = "_emptyText_72gsn_45";
-const userBubble = "_userBubble_72gsn_69";
-const assistantBubble = "_assistantBubble_72gsn_95";
-const toolCard = "_toolCard_72gsn_213";
-const toolHeader = "_toolHeader_72gsn_229";
-const toolName = "_toolName_72gsn_251";
-const toolState = "_toolState_72gsn_263";
-const toolStateDone = "_toolStateDone_72gsn_277";
-const toolBody = "_toolBody_72gsn_287";
-const toolArgs = "_toolArgs_72gsn_299";
-const cursor = "_cursor_72gsn_319";
-const systemMsg = "_systemMsg_72gsn_349";
-const questionCard = "_questionCard_72gsn_367";
-const questionHeader = "_questionHeader_72gsn_383";
-const questionTitle = "_questionTitle_72gsn_399";
-const questionStateRunning = "_questionStateRunning_72gsn_413";
-const questionStateDone = "_questionStateDone_72gsn_427";
-const questionStateStale = "_questionStateStale_72gsn_441";
-const questionCardStale = "_questionCardStale_72gsn_455";
-const questionOptionDisabled = "_questionOptionDisabled_72gsn_463";
-const questionBody = "_questionBody_72gsn_473";
-const questionItem = "_questionItem_72gsn_487";
-const questionItemHeader = "_questionItemHeader_72gsn_499";
-const questionItemText = "_questionItemText_72gsn_515";
-const questionAnswerResult = "_questionAnswerResult_72gsn_527";
-const questionOptions = "_questionOptions_72gsn_549";
-const questionOption = "_questionOption_72gsn_463";
-const questionOptionSelected = "_questionOptionSelected_72gsn_601";
-const questionOptionLabel = "_questionOptionLabel_72gsn_611";
-const questionOptionDesc = "_questionOptionDesc_72gsn_623";
-const questionCustom = "_questionCustom_72gsn_635";
-const questionCustomInput = "_questionCustomInput_72gsn_643";
-const questionSubmit = "_questionSubmit_72gsn_683";
-const questionSubmitActive = "_questionSubmitActive_72gsn_709";
-const styles$7 = {
-  list,
+const list$1 = "_list_i10gk_1";
+const empty = "_empty_i10gk_21";
+const emptyText = "_emptyText_i10gk_45";
+const userBubble = "_userBubble_i10gk_69";
+const assistantMsg = "_assistantMsg_i10gk_97";
+const toolCard = "_toolCard_i10gk_205";
+const toolHeader = "_toolHeader_i10gk_221";
+const toolName = "_toolName_i10gk_243";
+const toolState = "_toolState_i10gk_255";
+const toolStateDone = "_toolStateDone_i10gk_269";
+const toolBody = "_toolBody_i10gk_279";
+const toolArgs = "_toolArgs_i10gk_291";
+const cursor = "_cursor_i10gk_311";
+const systemMsg = "_systemMsg_i10gk_341";
+const questionCard = "_questionCard_i10gk_359";
+const questionHeader = "_questionHeader_i10gk_375";
+const questionTitle = "_questionTitle_i10gk_391";
+const questionStateRunning = "_questionStateRunning_i10gk_405";
+const questionStateDone = "_questionStateDone_i10gk_419";
+const questionStateStale = "_questionStateStale_i10gk_433";
+const questionCardStale = "_questionCardStale_i10gk_447";
+const questionOptionDisabled = "_questionOptionDisabled_i10gk_455";
+const questionBody = "_questionBody_i10gk_465";
+const questionItem = "_questionItem_i10gk_479";
+const questionItemHeader = "_questionItemHeader_i10gk_491";
+const questionItemText = "_questionItemText_i10gk_507";
+const questionAnswerResult = "_questionAnswerResult_i10gk_519";
+const questionOptions = "_questionOptions_i10gk_541";
+const questionOption = "_questionOption_i10gk_455";
+const questionOptionSelected = "_questionOptionSelected_i10gk_593";
+const questionOptionLabel = "_questionOptionLabel_i10gk_603";
+const questionOptionDesc = "_questionOptionDesc_i10gk_615";
+const questionCustom = "_questionCustom_i10gk_627";
+const questionCustomInput = "_questionCustomInput_i10gk_635";
+const questionSubmit = "_questionSubmit_i10gk_675";
+const questionSubmitActive = "_questionSubmitActive_i10gk_701";
+const userMsgWrap = "_userMsgWrap_i10gk_727";
+const userFiles = "_userFiles_i10gk_745";
+const userFileChip = "_userFileChip_i10gk_759";
+const userFileChipImage = "_userFileChipImage_i10gk_785";
+const userFileThumb = "_userFileThumb_i10gk_801";
+const userFileName = "_userFileName_i10gk_817";
+const imagePreview$1 = "_imagePreview_i10gk_833";
+const imagePreviewClose$1 = "_imagePreviewClose_i10gk_855";
+const imagePreviewImg$1 = "_imagePreviewImg_i10gk_899";
+const retryBanner = "_retryBanner_i10gk_921";
+const retryBannerText = "_retryBannerText_i10gk_945";
+const retryBannerBtn = "_retryBannerBtn_i10gk_955";
+const styles$8 = {
+  list: list$1,
   empty,
   emptyText,
   userBubble,
-  assistantBubble,
+  assistantMsg,
   toolCard,
   toolHeader,
   toolName,
@@ -47240,7 +50598,19 @@ const styles$7 = {
   questionCustom,
   questionCustomInput,
   questionSubmit,
-  questionSubmitActive
+  questionSubmitActive,
+  userMsgWrap,
+  userFiles,
+  userFileChip,
+  userFileChipImage,
+  userFileThumb,
+  userFileName,
+  imagePreview: imagePreview$1,
+  imagePreviewClose: imagePreviewClose$1,
+  imagePreviewImg: imagePreviewImg$1,
+  retryBanner,
+  retryBannerText,
+  retryBannerBtn
 };
 const EMPTY_MESSAGES = [];
 function MessageList() {
@@ -47251,6 +50621,9 @@ function MessageList() {
     return id ? s.messages[id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
   });
   const initialized = useAgentStore((s) => s.initialized);
+  const lastFailedQuery = useAgentStore((s) => s.lastFailedQuery);
+  const retryLastMessage = useAgentStore((s) => s.retryLastMessage);
+  const isStreaming = useAgentStore((s) => s.isStreaming);
   const listRef = reactExports.useRef(null);
   const userScrolled = reactExports.useRef(false);
   const scrollToBottom = reactExports.useCallback((smooth = true) => {
@@ -47271,22 +50644,28 @@ function MessageList() {
     userScrolled.current = distFromBottom > 60;
   }, []);
   if (!initialized || !activeSessionId) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.empty, children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.empty, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(OpencodeLogo, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.emptyText, children: t2("agent.emptyNew") })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.emptyText, children: t2("agent.emptyNew") })
     ] });
   }
   if (messages2.length === 0) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.empty, children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.empty, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(OpencodeLogo, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.emptyText, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.emptyText, children: [
         t2("agent.emptySend"),
         /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 11 }, children: t2("agent.emptyHint") })
       ] })
     ] });
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.list, ref: listRef, onScroll: handleScroll, children: mergeAssistantMessages(messages2).map((msg2) => /* @__PURE__ */ jsxRuntimeExports.jsx(MessageItem, { msg: msg2 }, msg2.id)) });
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.list, ref: listRef, onScroll: handleScroll, children: [
+    mergeAssistantMessages(messages2).map((msg2) => /* @__PURE__ */ jsxRuntimeExports.jsx(MessageItem, { msg: msg2 }, msg2.id)),
+    lastFailedQuery && !isStreaming && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.retryBanner, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.retryBannerText, children: t2("agent.queryFailed") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$8.retryBannerBtn, onClick: retryLastMessage, children: t2("common.retry") })
+    ] })
+  ] });
 }
 function mergeAssistantMessages(messages2) {
   const result = [];
@@ -47332,16 +50711,41 @@ const mdComponents = {
   }
 };
 function MessageItem({ msg: msg2 }) {
+  const [previewImage, setPreviewImage] = reactExports.useState(null);
   if (msg2.role === "system") {
     const textPart = msg2.contentParts.find((p) => p.kind === "text");
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.systemMsg, children: textPart?.text ?? "" });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.systemMsg, children: textPart?.text ?? "" });
   }
   if (msg2.role === "user") {
     const textPart = msg2.contentParts.find((p) => p.kind === "text");
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.userBubble, children: textPart?.text ?? "" });
+    const filePart = msg2.contentParts.find((p) => p.kind === "file");
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.userMsgWrap, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.userBubble, children: textPart?.text ?? "" }),
+      filePart && filePart.files.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.userFiles, children: filePart.files.map((f, i) => {
+        const isImage = f.mime.startsWith("image/");
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "span",
+          {
+            className: `${styles$8.userFileChip} ${isImage ? styles$8.userFileChipImage : ""}`,
+            ...isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => {
+              if (e.key === "Enter") setPreviewImage(f.url);
+            } } : {},
+            children: [
+              isImage && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$8.userFileThumb, src: f.url, alt: f.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.userFileName, children: f.name })
+            ]
+          },
+          i
+        );
+      }) }),
+      previewImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.imagePreview, onClick: () => setPreviewImage(null), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$8.imagePreviewClose, onClick: () => setPreviewImage(null), children: "×" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$8.imagePreviewImg, src: previewImage, alt: "preview", onClick: (e) => e.stopPropagation() })
+      ] })
+    ] });
   }
   const hasText = msg2.contentParts.some((p) => p.kind === "text" && p.text?.trim());
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.assistantBubble, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.assistantMsg, children: [
     msg2.contentParts.map((part, i) => {
       if (part.kind === "tool") {
         return part.toolName === "question" ? /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionCard, { args: part.args, result: part.result, status: part.status }, part.callID || i) : /* @__PURE__ */ jsxRuntimeExports.jsx(ToolCallCard, { toolName: part.toolName, args: part.args, result: part.result, status: part.status }, part.callID || i);
@@ -47351,7 +50755,7 @@ function MessageItem({ msg: msg2 }) {
       }
       return null;
     }),
-    msg2.isStreaming && !hasText && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.cursor })
+    msg2.isStreaming && !hasText && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.cursor })
   ] });
 }
 function QuestionCard({
@@ -47407,89 +50811,89 @@ function QuestionCard({
     await answerQuestion(answers);
   };
   if (!isDone && !submitted && !isLive) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$7.questionCard} ${styles$7.questionCardStale}`, children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$8.questionCard} ${styles$8.questionCardStale}`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: styles$7.questionHeader,
+          className: styles$8.questionHeader,
           style: questions.length > 0 ? { cursor: "pointer" } : void 0,
           onClick: questions.length > 0 ? () => setExpanded((v2) => !v2) : void 0,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateStale, children: t2("tool.interrupted") ?? "已中断" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionStateStale, children: t2("tool.interrupted") ?? "已中断" }),
             questions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon, { open: expanded })
           ]
         }
       ),
-      expanded && questions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionBody, children: questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
-        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
-        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionOptions, children: q2.options.map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$7.questionOption} ${styles$7.questionOptionDisabled}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionLabel, children: opt.label }),
-          opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionDesc, children: opt.description })
+      expanded && questions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionBody, children: questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionItem, children: [
+        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemHeader, children: q2.header }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemText, children: q2.question }),
+        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionOptions, children: q2.options.map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$8.questionOption} ${styles$8.questionOptionDisabled}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionOptionLabel, children: opt.label }),
+          opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionOptionDesc, children: opt.description })
         ] }, opt.label)) })
       ] }, qIdx)) })
     ] });
   }
   if (isDone || submitted) {
     const canExpand = submitted ? questions.length > 0 : Boolean(result);
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionCard, children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionCard, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: styles$7.questionHeader,
+          className: styles$8.questionHeader,
           style: canExpand ? { cursor: "pointer" } : void 0,
           onClick: canExpand ? () => setExpanded((v2) => !v2) : void 0,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateDone, children: t2("tool.completed") ?? "已完成" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionStateDone, children: t2("tool.completed") ?? "已完成" }),
             canExpand && /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon, { open: expanded })
           ]
         }
       ),
-      expanded && canExpand && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionBody, children: submitted && questions.length > 0 ? questions.map((q2, qIdx) => {
+      expanded && canExpand && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionBody, children: submitted && questions.length > 0 ? questions.map((q2, qIdx) => {
         const ans = (answers[qIdx] ?? []).filter(Boolean);
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
-          q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionAnswerResult, children: ans.length > 0 ? ans.join("、") : "—" })
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionItem, children: [
+          q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemHeader, children: q2.header }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemText, children: q2.question }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionAnswerResult, children: ans.length > 0 ? ans.join("、") : "—" })
         ] }, qIdx);
-      }) : result ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$7.toolArgs, children: result }) : null })
+      }) : result ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$8.toolArgs, children: result }) : null })
     ] });
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionCard, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionHeader, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionCard, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionHeader, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(QuestionIcon, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionStateRunning, children: t2("tool.waitingInput") ?? "等待输入" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionTitle, children: t2("tool.question") ?? "问卷调查" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionStateRunning, children: t2("tool.waitingInput") ?? "等待输入" })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionBody, children: [
-      questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.questionItem, children: [
-        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemHeader, children: q2.header }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionItemText, children: q2.question }),
-        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionOptions, children: q2.options.map((opt) => {
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionBody, children: [
+      questions.map((q2, qIdx) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.questionItem, children: [
+        q2.header && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemHeader, children: q2.header }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionItemText, children: q2.question }),
+        q2.options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionOptions, children: q2.options.map((opt) => {
           const selected = answers[qIdx]?.includes(opt.label);
           return /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "button",
             {
               type: "button",
-              className: `${styles$7.questionOption} ${selected ? styles$7.questionOptionSelected : ""}`,
+              className: `${styles$8.questionOption} ${selected ? styles$8.questionOptionSelected : ""}`,
               onClick: () => toggleOption(qIdx, opt.label, q2.multiple),
               children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionLabel, children: opt.label }),
-                opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.questionOptionDesc, children: opt.description })
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionOptionLabel, children: opt.label }),
+                opt.description && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.questionOptionDesc, children: opt.description })
               ]
             },
             opt.label
           );
         }) }),
-        q2.custom !== false && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.questionCustom, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        q2.custom !== false && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$8.questionCustom, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
           {
             type: "text",
-            className: styles$7.questionCustomInput,
+            className: styles$8.questionCustomInput,
             placeholder: t2("tool.customAnswer") ?? "自定义输入…",
             value: customTexts[qIdx] ?? "",
             onChange: (e) => handleCustomChange(qIdx, e.target.value)
@@ -47500,7 +50904,7 @@ function QuestionCard({
         "button",
         {
           type: "button",
-          className: `${styles$7.questionSubmit} ${allAnswered ? styles$7.questionSubmitActive : ""}`,
+          className: `${styles$8.questionSubmit} ${allAnswered ? styles$8.questionSubmitActive : ""}`,
           disabled: !allAnswered,
           onClick: handleSubmit,
           children: t2("tool.submit") ?? "提交"
@@ -47525,18 +50929,18 @@ function ToolCallCard({
   const [open, setOpen] = reactExports.useState(false);
   const t2 = useT();
   const isDone = status === "completed" || status === "error";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.toolCard, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.toolHeader, onClick: () => setOpen(!open), children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.toolCard, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.toolHeader, onClick: () => setOpen(!open), children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(ToolIcon, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.toolName, children: toolName2 }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$7.toolState} ${isDone ? styles$7.toolStateDone : ""}`, children: status === "completed" ? t2("tool.completed") : status === "error" ? t2("tool.error") : t2("tool.running") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$8.toolName, children: toolName2 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$8.toolState} ${isDone ? styles$8.toolStateDone : ""}`, children: status === "completed" ? t2("tool.completed") : status === "error" ? t2("tool.error") : t2("tool.running") }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronIcon, { open })
     ] }),
-    open && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.toolBody, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$7.toolArgs, children: JSON.stringify(args, null, 2) }),
+    open && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$8.toolBody, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$8.toolArgs, children: JSON.stringify(args, null, 2) }),
       isDone && result !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { fontSize: 10, color: "var(--text-tertiary)", margin: "6px 0 2px" }, children: t2("tool.returnValue") }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$7.toolArgs, children: result })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: styles$8.toolArgs, children: result })
       ] })
     ] })
   ] });
@@ -47586,49 +50990,285 @@ function OpencodeLogo() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M216 12V18H228V12H216ZM234 24H216V30H234V36H210V6H234V24Z", fill: "#211E1E" })
   ] });
 }
-const overlay = "_overlay_183e9_1";
-const modal = "_modal_183e9_21";
-const header = "_header_183e9_45";
-const title = "_title_183e9_63";
-const closeBtn = "_closeBtn_183e9_75";
-const body$1 = "_body_183e9_115";
-const sectionLabel = "_sectionLabel_183e9_127";
-const modelItem = "_modelItem_183e9_145";
-const active = "_active_183e9_175";
-const modelName = "_modelName_183e9_183";
-const freeBadge = "_freeBadge_183e9_201";
-const checkmark = "_checkmark_183e9_221";
-const divider = "_divider_183e9_241";
-const providerItem = "_providerItem_183e9_253";
-const providerIcon = "_providerIcon_183e9_285";
-const providerName = "_providerName_183e9_317";
-const providerTag = "_providerTag_183e9_329";
-const providerAddBtn = "_providerAddBtn_183e9_347";
-const providerBlock = "_providerBlock_183e9_389";
-const connectedBadge = "_connectedBadge_183e9_399";
-const catalogLoading = "_catalogLoading_183e9_419";
-const modelSubList = "_modelSubList_183e9_431";
-const keyInputRow = "_keyInputRow_183e9_445";
-const keyInput = "_keyInput_183e9_445";
-const keySaveBtn = "_keySaveBtn_183e9_489";
-const keyCancelBtn = "_keyCancelBtn_183e9_521";
+const overlay$1 = "_overlay_1sboz_1";
+const dialog = "_dialog_1sboz_21";
+const header$1 = "_header_1sboz_47";
+const headerLeft = "_headerLeft_1sboz_49";
+const backBtn = "_backBtn_1sboz_51";
+const closeBtn$1 = "_closeBtn_1sboz_51";
+const body$2 = "_body_1sboz_67";
+const titleRow = "_titleRow_1sboz_73";
+const providerIcon$1 = "_providerIcon_1sboz_75";
+const providerTitle = "_providerTitle_1sboz_85";
+const desc = "_desc_1sboz_91";
+const list = "_list_1sboz_97";
+const listItem = "_listItem_1sboz_99";
+const listDot = "_listDot_1sboz_109";
+const form = "_form_1sboz_121";
+const field = "_field_1sboz_123";
+const fieldLabel = "_fieldLabel_1sboz_125";
+const fieldInput = "_fieldInput_1sboz_127";
+const error$1 = "_error_1sboz_143";
+const submit = "_submit_1sboz_149";
+const oauthBox = "_oauthBox_1sboz_165";
+const oauthIcon = "_oauthIcon_1sboz_167";
+const oauthText = "_oauthText_1sboz_169";
+const styles$7 = {
+  overlay: overlay$1,
+  dialog,
+  header: header$1,
+  headerLeft,
+  backBtn,
+  closeBtn: closeBtn$1,
+  body: body$2,
+  titleRow,
+  providerIcon: providerIcon$1,
+  providerTitle,
+  desc,
+  list,
+  listItem,
+  listDot,
+  form,
+  field,
+  fieldLabel,
+  fieldInput,
+  error: error$1,
+  submit,
+  oauthBox,
+  oauthIcon,
+  oauthText
+};
+function keyLabel(provider) {
+  return provider.env?.[0] || "API Key";
+}
+function buildDesc(provider, methods, t2, inForm, isOAuth, activeLabel) {
+  if (isOAuth) return t2("model.oauthDesc");
+  if (methods.length > 1 && !inForm) return t2("model.chooseMethod", { provider: provider.name });
+  const label2 = activeLabel || keyLabel(provider);
+  return t2("model.providerDesc", { provider: provider.name, key: label2 });
+}
+function ProviderConfigModal({ provider, onClose }) {
+  const t2 = useT();
+  const setProviderConfig = useAgentStore((s) => s.setProviderConfig);
+  const overlayRef = reactExports.useRef(null);
+  const [step, setStep] = reactExports.useState("list");
+  const [activeMethod, setActiveMethod] = reactExports.useState(null);
+  const [vals, setVals] = reactExports.useState({});
+  const [saving, setSaving] = reactExports.useState(false);
+  const [err, setErr] = reactExports.useState(null);
+  const methods = provider.authMethods || [];
+  const hasChoices = methods.length > 1;
+  const inForm = step === "form";
+  const isOAuth = activeMethod?.type === "oauth";
+  const goBack = reactExports.useCallback(() => {
+    setStep("list");
+    setActiveMethod(null);
+    setVals({});
+    setErr(null);
+  }, []);
+  reactExports.useEffect(() => {
+    const h2 = (e) => {
+      if (e.key !== "Escape") return;
+      if (inForm) goBack();
+      else onClose();
+    };
+    window.addEventListener("keydown", h2);
+    return () => window.removeEventListener("keydown", h2);
+  }, [onClose, inForm, goBack]);
+  const effectiveMethod = reactExports.useMemo(() => {
+    if (activeMethod) return activeMethod;
+    if (methods.length === 0) return { type: "api", label: keyLabel(provider) };
+    if (methods.length === 1) {
+      if (methods[0].type === "api") return methods[0];
+      return methods[0];
+    }
+    return null;
+  }, [activeMethod, methods, provider]);
+  const fields = reactExports.useMemo(() => {
+    if (!effectiveMethod || effectiveMethod.type !== "api") return [];
+    const prompts = effectiveMethod.prompts || [];
+    if (prompts.length > 0) {
+      return prompts.filter((p) => !p.when || vals[p.when.key] === p.when.value).map((p) => ({
+        key: p.key,
+        val: vals[p.key] || "",
+        label: p.message,
+        placeholder: p.placeholder,
+        options: p.options
+      }));
+    }
+    return [{ key: "key", val: vals["key"] || "", label: effectiveMethod.label, placeholder: t2("model.apiKeyPlaceholder"), options: void 0 }];
+  }, [effectiveMethod, vals, t2]);
+  const pickMethod = (m) => {
+    if (m.type === "oauth") {
+      setSaving(true);
+      setErr(null);
+      setProviderConfig(provider.id, { type: "oauth" }).then(onClose).catch((e) => {
+        setErr(e?.message || String(e));
+        setSaving(false);
+      });
+      return;
+    }
+    setActiveMethod(m);
+    setStep("form");
+    setVals({});
+    setErr(null);
+  };
+  const submit2 = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setErr(null);
+    try {
+      if (effectiveMethod?.type === "oauth") {
+        await setProviderConfig(provider.id, { type: "oauth" });
+      } else {
+        const key = vals["key"] || "";
+        const extra = {};
+        for (const f of fields) {
+          if (f.key !== "key" && f.val) extra[f.key] = f.val;
+        }
+        await setProviderConfig(provider.id, { type: "api", key: key || void 0, options: Object.keys(extra).length > 0 ? extra : void 0 });
+      }
+      onClose();
+    } catch (e2) {
+      setErr(e2?.message || String(e2));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const canSubmit = effectiveMethod?.type === "oauth" || fields.length > 0 && fields[0].val.trim().length > 0;
+  const title2 = t2("model.connectProvider", { name: provider.name });
+  const desc2 = buildDesc(provider, methods, t2, inForm, isOAuth, activeMethod?.label);
+  const showChoices = hasChoices && !inForm;
+  const showForm = !hasChoices || inForm && !isOAuth;
+  const showOAuth = inForm && isOAuth || !hasChoices && effectiveMethod?.type === "oauth";
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.overlay, ref: overlayRef, onClick: (e) => {
+    if (e.target === overlayRef.current) onClose();
+  }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.dialog, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.header, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.headerLeft, children: inForm && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$7.backBtn, onClick: goBack, "aria-label": t2("common.back"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowLeftIcon, {}) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$7.closeBtn, onClick: onClose, "aria-label": t2("common.close"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloseIcon, {}) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.body, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.titleRow, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.providerIcon, children: provider.name.charAt(0).toUpperCase() }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.providerTitle, children: title2 })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.desc, children: desc2 }),
+      showChoices && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.list, children: methods.map((m, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$7.listItem, onClick: () => pickMethod(m), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.listDot }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: m.label })
+      ] }, i)) }),
+      showForm && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { className: styles$7.form, onSubmit: submit2, children: [
+        fields.map((f) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.field, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: styles$7.fieldLabel, children: f.label }),
+          f.options ? /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: styles$7.fieldInput, value: f.val, onChange: (e) => setVals((p) => ({ ...p, [f.key]: e.target.value })), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: t2("model.selectOption") }),
+            f.options.map((o) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: o.value, children: o.label }, o.value))
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("input", { className: styles$7.fieldInput, type: "text", autoFocus: true, value: f.val, onChange: (e) => setVals((p) => ({ ...p, [f.key]: e.target.value })), placeholder: f.placeholder })
+        ] }, f.key)),
+        err && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$7.error, children: err }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", className: styles$7.submit, disabled: saving || !canSubmit, children: saving ? "…" : t2("model.submit") })
+      ] }),
+      showOAuth && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$7.oauthBox, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.oauthIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx(LockIcon, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$7.oauthText, children: activeMethod?.label })
+      ] })
+    ] })
+  ] }) });
+}
+function ArrowLeftIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 20 20", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 5l-5 5 5 5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }) });
+}
+function CloseIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 20 20", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 5l10 10M15 5L5 15", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) });
+}
+function LockIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2.5", y: "6.5", width: "11", height: "8", rx: "1.5", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 6.5V4a3 3 0 016 0v2.5", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
+  ] });
+}
+const overlay = "_overlay_v95d7_1";
+const modal = "_modal_v95d7_21";
+const header = "_header_v95d7_45";
+const title = "_title_v95d7_63";
+const closeBtn = "_closeBtn_v95d7_75";
+const searchBar = "_searchBar_v95d7_119";
+const searchIcon = "_searchIcon_v95d7_137";
+const searchInput = "_searchInput_v95d7_151";
+const searchClear = "_searchClear_v95d7_177";
+const currentBadge = "_currentBadge_v95d7_219";
+const currentLabel = "_currentLabel_v95d7_241";
+const currentValue = "_currentValue_v95d7_249";
+const body$1 = "_body_v95d7_269";
+const sectionLabel = "_sectionLabel_v95d7_281";
+const modelItem = "_modelItem_v95d7_303";
+const active = "_active_v95d7_335";
+const modelProviderTag = "_modelProviderTag_v95d7_343";
+const modelName = "_modelName_v95d7_373";
+const modelMeta = "_modelMeta_v95d7_393";
+const capTag = "_capTag_v95d7_411";
+const ctxTag = "_ctxTag_v95d7_431";
+const costTag = "_costTag_v95d7_451";
+const modelBadge = "_modelBadge_v95d7_475";
+const badgeFree = "_badgeFree_v95d7_493";
+const badgeDefault = "_badgeDefault_v95d7_503";
+const freeBadge = "_freeBadge_v95d7_513";
+const checkmark = "_checkmark_v95d7_533";
+const divider = "_divider_v95d7_553";
+const providerItem = "_providerItem_v95d7_569";
+const providerIcon = "_providerIcon_v95d7_601";
+const providerName = "_providerName_v95d7_633";
+const providerInfo = "_providerInfo_v95d7_653";
+const providerModelCount = "_providerModelCount_v95d7_667";
+const providerTag = "_providerTag_v95d7_683";
+const providerAddBtn = "_providerAddBtn_v95d7_703";
+const providerBlock = "_providerBlock_v95d7_747";
+const connectedBadge = "_connectedBadge_v95d7_757";
+const catalogLoading = "_catalogLoading_v95d7_777";
+const modelSubList = "_modelSubList_v95d7_789";
+const keyInputRow = "_keyInputRow_v95d7_807";
+const keyInput = "_keyInput_v95d7_807";
+const keySaveBtn = "_keySaveBtn_v95d7_851";
+const keyCancelBtn = "_keyCancelBtn_v95d7_883";
+const variantSection = "_variantSection_v95d7_917";
+const variantItem = "_variantItem_v95d7_935";
+const variantDot = "_variantDot_v95d7_975";
+const emptyState = "_emptyState_v95d7_991";
 const styles$6 = {
   overlay,
   modal,
   header,
   title,
   closeBtn,
+  searchBar,
+  searchIcon,
+  searchInput,
+  searchClear,
+  currentBadge,
+  currentLabel,
+  currentValue,
   body: body$1,
   sectionLabel,
   modelItem,
   active,
+  modelProviderTag,
   modelName,
+  modelMeta,
+  capTag,
+  ctxTag,
+  costTag,
+  modelBadge,
+  badgeFree,
+  badgeDefault,
   freeBadge,
   checkmark,
   divider,
   providerItem,
   providerIcon,
   providerName,
+  providerInfo,
+  providerModelCount,
   providerTag,
   providerAddBtn,
   providerBlock,
@@ -47638,23 +51278,57 @@ const styles$6 = {
   keyInputRow,
   keyInput,
   keySaveBtn,
-  keyCancelBtn
+  keyCancelBtn,
+  variantSection,
+  variantItem,
+  variantDot,
+  emptyState
 };
-const PROVIDER_ABBR = {
-  anthropic: "A",
-  openai: "O",
-  google: "G",
-  "github-copilot": "GH",
-  githubcopilot: "GH",
-  openrouter: "<",
-  mistral: "M",
-  groq: "Gq",
-  xai: "X"
+const PROVIDER_PRIORITY = {
+  opencode: 0,
+  "opencode-go": 0,
+  opencodego: 0,
+  anthropic: 1,
+  openai: 1,
+  google: 2,
+  "github-copilot": 3,
+  githubcopilot: 3,
+  openrouter: 4,
+  mistral: 4,
+  groq: 5,
+  xai: 5,
+  deepseek: 5,
+  meta: 6,
+  codestral: 6,
+  perplexity: 7,
+  cohere: 8,
+  cerebras: 9,
+  fireworks: 10
 };
-function providerAbbr(id, name2) {
-  const key = id.toLowerCase().replace(/[\s-]/g, "");
-  if (PROVIDER_ABBR[key]) return PROVIDER_ABBR[key];
-  return (name2 || id).slice(0, 2).toUpperCase();
+function providerPriority(id) {
+  const key = id.toLowerCase().replace(/[\s_-]/g, "");
+  return PROVIDER_PRIORITY[key] ?? 100;
+}
+const PROVIDER_META = {
+  anthropic: { abbr: "A", color: "#d97757" },
+  openai: { abbr: "O", color: "#74aa9c" },
+  google: { abbr: "G", color: "#4285f4" },
+  "github-copilot": { abbr: "GH", color: "#8957e5" },
+  githubcopilot: { abbr: "GH", color: "#8957e5" },
+  openrouter: { abbr: "<", color: "#6366f1" },
+  mistral: { abbr: "M", color: "#f59e0b" },
+  groq: { abbr: "Gq", color: "#ef4444" },
+  xai: { abbr: "X", color: "#ffffff" },
+  deepseek: { abbr: "DS", color: "#4a6cf7" },
+  meta: { abbr: "Ll", color: "#0668E1" },
+  perplexity: { abbr: "P", color: "#20B8CD" },
+  cerebras: { abbr: "C", color: "#f97316" },
+  cohere: { abbr: "Co", color: "#39594a" },
+  fireworks: { abbr: "Fw", color: "#e8643f" }
+};
+function providerMeta(id) {
+  const key = id.toLowerCase().replace(/[\s_-]/g, "");
+  return PROVIDER_META[key] ?? { abbr: id.slice(0, 2).toUpperCase() };
 }
 const PROVIDER_TAGS = {
   "opencode-zen": "model.recommended",
@@ -47665,6 +51339,36 @@ const PROVIDER_TAGS = {
 function providerTagKey(id) {
   return PROVIDER_TAGS[id.toLowerCase().replace(/[\s-]/g, "")] ?? null;
 }
+const STATUS_COLORS = {
+  alpha: { bg: "rgba(255,149,0,0.12)", text: "#ff9500" },
+  beta: { bg: "rgba(0,122,255,0.12)", text: "#007aff" },
+  deprecated: { bg: "rgba(255,59,48,0.12)", text: "#ff3b30" },
+  active: { bg: "transparent", text: "transparent" }
+};
+function formatContext(limit) {
+  if (!limit?.context) return "";
+  if (limit.context >= 1e6) return `${(limit.context / 1e6).toFixed(1)}M`;
+  if (limit.context >= 1e3) return `${Math.round(limit.context / 1e3)}K`;
+  return `${limit.context}`;
+}
+function formatCost(cost) {
+  if (!cost) return "";
+  const parts = [];
+  if (cost.input > 0) parts.push(`$${cost.input.toFixed(2)}`);
+  if (cost.output > 0) parts.push(`$${cost.output.toFixed(2)}`);
+  if (parts.length === 0) return "";
+  return parts.join(" / ");
+}
+function capabilityTags(cap2) {
+  if (!cap2) return [];
+  const tags = [];
+  if (cap2.reasoning) tags.push("reasoning");
+  if (cap2.toolcall) tags.push("tools");
+  if (cap2.attachment) tags.push("files");
+  if (cap2.input?.image || cap2.input?.video) tags.push("vision");
+  if (cap2.input?.audio) tags.push("audio");
+  return tags;
+}
 function ModelPickerModal({ onClose }) {
   const t2 = useT();
   const configData = useAgentStore((s) => s.configData);
@@ -47674,185 +51378,366 @@ function ModelPickerModal({ onClose }) {
   const catalogProviders = useAgentStore((s) => s.catalogProviders);
   const catalogLoading2 = useAgentStore((s) => s.catalogLoading);
   const loadCatalog = useAgentStore((s) => s.loadCatalog);
-  const addProviderKey = useAgentStore((s) => s.addProviderKey);
+  const recentModels = useAgentStore((s) => s.recentModels);
   const overlayRef = reactExports.useRef(null);
+  const searchRef = reactExports.useRef(null);
   const [expanded, setExpanded] = reactExports.useState(null);
-  const [keyInputFor, setKeyInputFor] = reactExports.useState(null);
-  const [keyValue, setKeyValue] = reactExports.useState("");
-  const [saving, setSaving] = reactExports.useState(false);
+  const [searchQuery, setSearchQuery] = reactExports.useState("");
+  const [configProvider, setConfigProvider] = reactExports.useState(null);
   reactExports.useEffect(() => {
     loadCatalog();
   }, [loadCatalog]);
+  reactExports.useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
   const handleOverlayClick = (e) => {
     if (e.target === overlayRef.current) onClose();
   };
   reactExports.useEffect(() => {
     const handler = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (searchQuery) {
+          setSearchQuery("");
+          return;
+        }
+        onClose();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [onClose, searchQuery]);
   const handleSelect = (providerId, modelId) => {
     setModel(providerId, modelId);
     onClose();
   };
-  const openKeyInput = (providerId) => {
-    setKeyInputFor(providerId);
-    setKeyValue("");
-    setExpanded(null);
-  };
-  const handleSaveKey = async (providerId) => {
-    const key = keyValue.trim();
-    if (!key) return;
-    setSaving(true);
-    try {
-      await addProviderKey(providerId, key);
-      setKeyInputFor(null);
-      setKeyValue("");
-      setExpanded(providerId);
-    } finally {
-      setSaving(false);
+  const handleConfigureProvider = (provider) => {
+    if (provider.connected) {
+      setExpanded(expanded === provider.id ? null : provider.id);
+    } else {
+      setConfigProvider(provider);
     }
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.overlay, ref: overlayRef, onClick: handleOverlayClick, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.modal, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.header, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.title, children: t2("model.title") }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$6.closeBtn, onClick: onClose, title: t2("common.close"), children: "✕" })
+  const { connectedProviders, unconnectedProviders } = reactExports.useMemo(() => {
+    let list2 = [...catalogProviders];
+    if (searchQuery.trim()) {
+      const q2 = searchQuery.toLowerCase();
+      list2 = list2.map((p) => ({
+        ...p,
+        models: p.models.filter(
+          (m) => m.name.toLowerCase().includes(q2) || m.id.toLowerCase().includes(q2) || p.name.toLowerCase().includes(q2) || m.family && m.family.toLowerCase().includes(q2)
+        )
+      })).filter((p) => p.models.length > 0);
+    }
+    list2.sort((a, b) => {
+      const pa = providerPriority(a.id);
+      const pb = providerPriority(b.id);
+      if (pa !== pb) return pa - pb;
+      return a.name.localeCompare(b.name);
+    });
+    const connected = list2.filter((p) => p.connected);
+    const unconnected = list2.filter((p) => !p.connected);
+    return { connectedProviders: connected, unconnectedProviders: unconnected };
+  }, [catalogProviders, searchQuery]);
+  const recentModelEntries = reactExports.useMemo(() => {
+    if (recentModels.length === 0) return [];
+    return recentModels.map((r2) => {
+      const free = configData?.freeModels.find(
+        (fm) => fm.providerId === r2.providerId && fm.id === r2.modelId
+      );
+      if (free) return { providerId: r2.providerId, modelId: r2.modelId, name: free.name, free: true };
+      const provider = catalogProviders.find((p) => p.id === r2.providerId);
+      const model = provider?.models.find((m) => m.id === r2.modelId);
+      if (model) return { providerId: r2.providerId, modelId: r2.modelId, name: model.name, free: false };
+      return null;
+    }).filter(Boolean);
+  }, [recentModels, configData, catalogProviders]);
+  const hasResults = connectedProviders.length > 0 || unconnectedProviders.length > 0;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.overlay, ref: overlayRef, onClick: handleOverlayClick, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.modal, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.header, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.title, children: t2("model.title") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$6.closeBtn, onClick: onClose, title: t2("common.close"), children: "✕" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.searchBar, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.searchIcon, children: /* @__PURE__ */ jsxRuntimeExports.jsx(SearchIcon, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            ref: searchRef,
+            className: styles$6.searchInput,
+            type: "text",
+            placeholder: t2("model.searchPlaceholder"),
+            value: searchQuery,
+            onChange: (e) => setSearchQuery(e.target.value)
+          }
+        ),
+        searchQuery && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$6.searchClear, onClick: () => setSearchQuery(""), children: "✕" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.body, children: [
+        selectedProvider && selectedModel && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.currentBadge, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$6.currentLabel, children: [
+            t2("model.current"),
+            ":"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.currentValue, children: configData?.freeModels.find((m) => m.providerId === selectedProvider && m.id === selectedModel)?.name ?? catalogProviders.find((p) => p.id === selectedProvider)?.models.find((m) => m.id === selectedModel)?.name ?? `${selectedProvider}/${selectedModel}` })
+        ] }),
+        !searchQuery && configData && configData.freeModels.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: t2("model.freeModels") }),
+          configData.freeModels.map((m) => {
+            const isActive = selectedProvider === m.providerId && selectedModel === m.id;
+            return /* @__PURE__ */ jsxRuntimeExports.jsx(
+              ModelRow,
+              {
+                name: m.name,
+                isActive,
+                badge: t2("model.free"),
+                badgeStyle: "free",
+                onClick: () => handleSelect(m.providerId, m.id)
+              },
+              `free:${m.providerId}::${m.id}`
+            );
+          }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.divider })
+        ] }),
+        !searchQuery && recentModelEntries.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: t2("model.recent") }),
+          recentModelEntries.map((r2) => {
+            const isActive = selectedProvider === r2.providerId && selectedModel === r2.modelId;
+            return /* @__PURE__ */ jsxRuntimeExports.jsx(
+              ModelRow,
+              {
+                name: r2.name,
+                isActive,
+                badge: r2.free ? t2("model.free") : void 0,
+                badgeStyle: "free",
+                providerId: r2.providerId,
+                onClick: () => handleSelect(r2.providerId, r2.modelId)
+              },
+              `recent:${r2.providerId}::${r2.modelId}`
+            );
+          }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.divider })
+        ] }),
+        connectedProviders.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: searchQuery ? t2("model.searchResults") : t2("model.connectedProviders") }),
+          connectedProviders.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ProviderSection,
+            {
+              provider: p,
+              expanded,
+              setExpanded,
+              selectedProvider,
+              selectedModel,
+              onSelect: handleSelect,
+              onConfigure: handleConfigureProvider
+            },
+            p.id
+          ))
+        ] }),
+        unconnectedProviders.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: searchQuery ? t2("model.searchResults") : t2("model.addMore") }),
+          unconnectedProviders.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ProviderSection,
+            {
+              provider: p,
+              expanded,
+              setExpanded,
+              selectedProvider,
+              selectedModel,
+              onSelect: handleSelect,
+              onConfigure: handleConfigureProvider
+            },
+            p.id
+          ))
+        ] }),
+        !catalogLoading2 && searchQuery && !hasResults && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.emptyState, children: t2("model.noResults") }),
+        catalogLoading2 && catalogProviders.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.catalogLoading, children: t2("model.loadingProviders") }),
+        !configData && catalogProviders.length === 0 && !catalogLoading2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.catalogLoading, children: t2("common.loading") })
+      ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.body, children: [
-      configData && configData.freeModels.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.sectionLabel, children: t2("model.freeModels") }),
-        configData.freeModels.map((m) => {
-          const isActive = selectedProvider === m.providerId && selectedModel === m.id;
+    configProvider && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ProviderConfigModal,
+      {
+        provider: configProvider,
+        onClose: () => {
+          setConfigProvider(null);
+          loadCatalog();
+        }
+      }
+    )
+  ] });
+}
+function SectionLabel({ children }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.sectionLabel, children });
+}
+function ModelRow({
+  name: name2,
+  isActive,
+  badge: badge2,
+  badgeStyle = "default",
+  capabilities,
+  context,
+  cost,
+  providerId,
+  onClick
+}) {
+  const meta2 = providerId ? providerMeta(providerId) : null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      className: `${styles$6.modelItem} ${isActive ? styles$6.active : ""}`,
+      onClick,
+      children: [
+        meta2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.modelProviderTag, style: meta2.color ? { borderColor: meta2.color } : void 0, children: meta2.abbr }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.modelName, children: name2 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$6.modelMeta, children: [
+          capabilities?.map((c2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.capTag, children: c2 }, c2)),
+          context && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.ctxTag, children: context }),
+          cost && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.costTag, children: cost })
+        ] }),
+        badge2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `${styles$6.modelBadge} ${styles$6[`badge${badge2.charAt(0).toUpperCase() + badge2.slice(1)}`] || styles$6.badgeDefault}`, children: badge2 }),
+        isActive && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.checkmark, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon, {}) })
+      ]
+    }
+  );
+}
+function ProviderSection({
+  provider,
+  expanded,
+  setExpanded,
+  selectedProvider,
+  selectedModel,
+  onSelect,
+  onConfigure
+}) {
+  const tag2 = providerTagKey(provider.id);
+  const meta2 = providerMeta(provider.id);
+  const isExpanded = expanded === provider.id;
+  const t2 = useT();
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.providerBlock, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: styles$6.providerItem,
+        onClick: () => onConfigure(provider),
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerIcon, style: meta2.color ? { borderColor: meta2.color } : void 0, children: meta2.abbr }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerName, children: provider.name }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerInfo, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerModelCount, children: provider.models.length }) }),
+          tag2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerTag, children: t2(tag2) }),
+          provider.connected ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.connectedBadge, children: t2("model.connected") }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerAddBtn, children: "+" })
+        ]
+      }
+    ),
+    isExpanded && provider.connected && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.modelSubList, children: [
+      provider.models.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.catalogLoading, children: t2("model.noModels") }),
+      provider.models.map((m) => {
+        const isActive = selectedProvider === provider.id && selectedModel === m.id;
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: `${styles$6.modelItem} ${isActive ? styles$6.active : ""}`,
+            onClick: () => onSelect(provider.id, m.id),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.modelName, children: m.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$6.modelMeta, children: [
+                capabilityTags(m.capabilities).map((c2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.capTag, children: c2 }, c2)),
+                m.limit?.context && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.ctxTag, children: formatContext(m.limit) }),
+                m.cost && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.costTag, children: formatCost(m.cost) })
+              ] }),
+              m.status && m.status !== "active" && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "span",
+                {
+                  className: styles$6.modelBadge,
+                  style: {
+                    background: STATUS_COLORS[m.status]?.bg,
+                    color: STATUS_COLORS[m.status]?.text
+                  },
+                  children: m.status
+                }
+              ),
+              isActive && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.checkmark, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon, {}) })
+            ]
+          },
+          m.id
+        );
+      }),
+      provider.models.some((m) => m.variants && m.variants.length > 0) && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.variantSection, children: provider.models.filter((m) => m.variants && m.variants.length > 0).map(
+        (m) => m.variants.filter((v2) => !v2.disabled).map((v2) => {
+          const isActive = selectedProvider === provider.id && selectedModel === `${m.id}@${v2.id}`;
           return /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "button",
             {
-              className: `${styles$6.modelItem} ${isActive ? styles$6.active : ""}`,
-              onClick: () => handleSelect(m.providerId, m.id),
+              className: `${styles$6.variantItem} ${isActive ? styles$6.active : ""}`,
+              onClick: () => onSelect(provider.id, `${m.id}@${v2.id}`),
               children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.modelName, children: m.name }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.freeBadge, children: t2("model.free") }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.variantDot, children: "↳" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$6.modelName, children: [
+                  m.name,
+                  " · ",
+                  v2.name
+                ] }),
                 isActive && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.checkmark, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon, {}) })
               ]
             },
-            `${m.providerId}::${m.id}`
+            `${m.id}@${v2.id}`
           );
-        }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.divider })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.sectionLabel, children: t2("model.addMore") }),
-      catalogLoading2 && catalogProviders.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.catalogLoading, children: t2("model.loadingProviders") }),
-      catalogProviders.map((p) => {
-        const tag2 = providerTagKey(p.id);
-        const abbr = providerAbbr(p.id, p.name);
-        const isExpanded = expanded === p.id;
-        const isKeyInput = keyInputFor === p.id;
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.providerBlock, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "button",
-            {
-              className: styles$6.providerItem,
-              onClick: () => {
-                if (p.connected) {
-                  setExpanded(isExpanded ? null : p.id);
-                } else {
-                  openKeyInput(p.id);
-                }
-              },
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerIcon, children: abbr }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerName, children: p.name }),
-                tag2 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerTag, children: t2(tag2) }),
-                p.connected ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.connectedBadge, children: t2("model.connected") }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.providerAddBtn, children: "+" })
-              ]
-            }
-          ),
-          isKeyInput && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.keyInputRow, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                className: styles$6.keyInput,
-                type: "password",
-                autoFocus: true,
-                placeholder: p.env[0] ? t2("model.enterEnv", { env: p.env[0] }) : t2("model.enterApiKey"),
-                value: keyValue,
-                onChange: (e) => setKeyValue(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key === "Enter") handleSaveKey(p.id);
-                  if (e.key === "Escape") setKeyInputFor(null);
-                }
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: styles$6.keySaveBtn,
-                disabled: saving || !keyValue.trim(),
-                onClick: () => handleSaveKey(p.id),
-                children: saving ? "…" : t2("common.save")
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: styles$6.keyCancelBtn,
-                onClick: () => setKeyInputFor(null),
-                children: t2("common.cancel")
-              }
-            )
-          ] }),
-          isExpanded && p.connected && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$6.modelSubList, children: [
-            p.models.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$6.catalogLoading, children: t2("model.noModels") }),
-            p.models.map((m) => {
-              const isActive = selectedProvider === p.id && selectedModel === m.id;
-              return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                "button",
-                {
-                  className: `${styles$6.modelItem} ${isActive ? styles$6.active : ""}`,
-                  onClick: () => handleSelect(p.id, m.id),
-                  children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.modelName, children: m.name }),
-                    isActive && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$6.checkmark, children: /* @__PURE__ */ jsxRuntimeExports.jsx(CheckIcon, {}) })
-                  ]
-                },
-                m.id
-              );
-            })
-          ] })
-        ] }, p.id);
-      }),
-      !configData && catalogProviders.length === 0 && !catalogLoading2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { padding: "24px 16px", color: "var(--text-tertiary)", fontSize: 13, textAlign: "center" }, children: t2("common.loading") })
+        })
+      ) })
     ] })
-  ] }) });
+  ] });
 }
 function CheckIcon() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 6l3 3 5-5", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "path",
+    {
+      d: "M2 6l3 3 5-5",
+      stroke: "currentColor",
+      strokeWidth: "1.8",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }
+  ) });
 }
-const inputArea = "_inputArea_kf2sr_1";
-const attachList = "_attachList_kf2sr_19";
-const attachChip = "_attachChip_kf2sr_33";
-const attachChipName = "_attachChipName_kf2sr_59";
-const attachChipRemove = "_attachChipRemove_kf2sr_73";
-const inputBox = "_inputBox_kf2sr_97";
-const textarea = "_textarea_kf2sr_119";
-const inputBoxRow = "_inputBoxRow_kf2sr_161";
-const attachBtn = "_attachBtn_kf2sr_177";
-const sendBtn = "_sendBtn_kf2sr_215";
-const stopBtn = "_stopBtn_kf2sr_259";
-const toolbar = "_toolbar_kf2sr_307";
-const modeDropWrap = "_modeDropWrap_kf2sr_325";
-const modeDropBtn = "_modeDropBtn_kf2sr_333";
-const modeDropList = "_modeDropList_kf2sr_369";
-const modeDropItem = "_modeDropItem_kf2sr_395";
-const modeDropItemActive = "_modeDropItemActive_kf2sr_427";
-const modelBtn = "_modelBtn_kf2sr_437";
-const modelBtnLabel = "_modelBtnLabel_kf2sr_483";
-const modelBtnLoading = "_modelBtnLoading_kf2sr_497";
+function SearchIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5.5", cy: "5.5", r: "4", stroke: "currentColor", strokeWidth: "1.3" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 9l3.5 3.5", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round" })
+  ] });
+}
+const inputArea = "_inputArea_jvgej_1";
+const inputAreaDragOver = "_inputAreaDragOver_jvgej_19";
+const attachList = "_attachList_jvgej_51";
+const attachChip = "_attachChip_jvgej_65";
+const attachChipImage = "_attachChipImage_jvgej_91";
+const attachChipThumb = "_attachChipThumb_jvgej_109";
+const attachChipName = "_attachChipName_jvgej_125";
+const attachChipRemove = "_attachChipRemove_jvgej_139";
+const inputBox = "_inputBox_jvgej_163";
+const textarea = "_textarea_jvgej_185";
+const inputBoxRow = "_inputBoxRow_jvgej_227";
+const attachBtn = "_attachBtn_jvgej_243";
+const sendBtn = "_sendBtn_jvgej_281";
+const stopBtn = "_stopBtn_jvgej_325";
+const toolbar = "_toolbar_jvgej_373";
+const modeDropWrap = "_modeDropWrap_jvgej_391";
+const modeDropBtn = "_modeDropBtn_jvgej_399";
+const modeDropList = "_modeDropList_jvgej_435";
+const modeDropItem = "_modeDropItem_jvgej_461";
+const modeDropItemActive = "_modeDropItemActive_jvgej_493";
+const modelBtn = "_modelBtn_jvgej_503";
+const modelBtnLabel = "_modelBtnLabel_jvgej_549";
+const modelBtnLoading = "_modelBtnLoading_jvgej_563";
+const imagePreview = "_imagePreview_jvgej_579";
+const imagePreviewClose = "_imagePreviewClose_jvgej_601";
+const imagePreviewImg = "_imagePreviewImg_jvgej_645";
 const styles$5 = {
   inputArea,
+  inputAreaDragOver,
   attachList,
   attachChip,
+  attachChipImage,
+  attachChipThumb,
   attachChipName,
   attachChipRemove,
   inputBox,
@@ -47869,7 +51754,10 @@ const styles$5 = {
   modeDropItemActive,
   modelBtn,
   modelBtnLabel,
-  modelBtnLoading
+  modelBtnLoading,
+  imagePreview,
+  imagePreviewClose,
+  imagePreviewImg
 };
 function AgentInput() {
   const t2 = useT();
@@ -47877,10 +51765,11 @@ function AgentInput() {
   const [modelPickerOpen, setModelPickerOpen] = reactExports.useState(false);
   const [modeDropOpen, setModeDropOpen] = reactExports.useState(false);
   const [attachments, setAttachments] = reactExports.useState([]);
+  const [previewImage, setPreviewImage] = reactExports.useState(null);
   const isStreaming = useAgentStore((s) => s.isStreaming);
   const sendMessage = useAgentStore((s) => s.sendMessage);
   const abortStreaming = useAgentStore((s) => s.abortStreaming);
-  const mode = useAgentStore((s) => s.mode);
+  const mode2 = useAgentStore((s) => s.mode);
   const setMode = useAgentStore((s) => s.setMode);
   const selectedModel = useAgentStore((s) => s.selectedModel);
   const configData = useAgentStore((s) => s.configData);
@@ -47922,6 +51811,72 @@ function AgentInput() {
       handleSend();
     }
   };
+  const handlePaste = reactExports.useCallback(async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageItems = [];
+    for (let i = 0; i < items.length; i++) {
+      const item2 = items[i];
+      if (item2.type.startsWith("image/")) {
+        imageItems.push(item2);
+      }
+    }
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    const newAttachments = [];
+    for (const item2 of imageItems) {
+      const file = item2.getAsFile();
+      if (!file) continue;
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.type.split("/")[1] ?? "png";
+      const name2 = file.name || `paste-${Date.now()}.${ext}`;
+      newAttachments.push({ name: name2, mime: file.type, url: dataUrl });
+    }
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
+  const [isDragOver, setIsDragOver] = reactExports.useState(false);
+  const handleDragOver = reactExports.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer?.types?.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+  const handleDragLeave = reactExports.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget)) {
+      setIsDragOver(false);
+    }
+  }, []);
+  const handleDrop = reactExports.useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles || droppedFiles.length === 0) return;
+    const newAttachments = [];
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.type.split("/")[1] || file.name.split(".").pop() || "bin";
+      const name2 = file.name || `drop-${Date.now()}.${ext}`;
+      newAttachments.push({ name: name2, mime: file.type || "application/octet-stream", url: dataUrl });
+    }
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
   reactExports.useEffect(() => {
     if (!modeDropOpen) return;
     const handler = (e) => {
@@ -47931,85 +51886,116 @@ function AgentInput() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [modeDropOpen]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputArea, children: [
-    attachments.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.attachList, children: attachments.map((f, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$5.attachChip, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.attachChipName, children: f.name }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: styles$5.attachChipRemove,
-          onClick: () => setAttachments((prev) => prev.filter((_2, j2) => j2 !== i)),
-          title: t2("common.remove"),
-          children: "×"
-        }
-      )
-    ] }, i)) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputBox, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "textarea",
-        {
-          ref: textareaRef,
-          className: styles$5.textarea,
-          value: text2,
-          onChange: handleChange,
-          onKeyDown: handleKeyDown,
-          placeholder: t2("agent.placeholder"),
-          rows: 2,
-          disabled: isStreaming && text2 === ""
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputBoxRow, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.attachBtn, title: t2("agent.attach"), onClick: async () => {
-          const files = await window.devtool.agent.pickFile();
-          if (files.length > 0) setAttachments((prev) => [...prev, ...files]);
-        }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon, {}) }),
-        isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.stopBtn, onClick: abortStreaming, title: t2("agent.stopGen"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(StopIcon, {}) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: styles$5.sendBtn,
-            onClick: handleSend,
-            disabled: !text2.trim() || serverStatus !== "ready",
-            title: t2("agent.send"),
-            children: /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowUpIcon, {})
-          }
-        )
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.toolbar, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.modeDropWrap, ref: modeDropRef, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$5.modeDropBtn, onClick: () => setModeDropOpen((v2) => !v2), children: [
-          mode === "build" ? "Build" : "Plan",
-          /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDownIcon, {})
-        ] }),
-        modeDropOpen && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.modeDropList, children: ["build", "plan"].map((m) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: `${styles$5.modeDropItem} ${mode === m ? styles$5.modeDropItemActive : ""}`,
-            onClick: () => {
-              setMode(m);
-              setModeDropOpen(false);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: `${styles$5.inputArea} ${isDragOver ? styles$5.inputAreaDragOver : ""}`,
+      onDragOver: handleDragOver,
+      onDragLeave: handleDragLeave,
+      onDrop: handleDrop,
+      children: [
+        attachments.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.attachList, children: attachments.map((f, i) => {
+          const isImage = f.mime.startsWith("image/");
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "span",
+            {
+              className: `${styles$5.attachChip} ${isImage ? styles$5.attachChipImage : ""}`,
+              ...isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => {
+                if (e.key === "Enter") setPreviewImage(f.url);
+              } } : {},
+              children: [
+                isImage && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$5.attachChipThumb, src: f.url, alt: f.name }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.attachChipName, children: f.name }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: styles$5.attachChipRemove,
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      setAttachments((prev) => prev.filter((_2, j2) => j2 !== i));
+                    },
+                    title: t2("common.remove"),
+                    children: "×"
+                  }
+                )
+              ]
             },
-            children: m === "build" ? "Build" : "Plan"
-          },
-          m
-        )) })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: styles$5.modelBtn,
-          onClick: () => setModelPickerOpen(true),
-          title: t2("agent.switchModel"),
-          disabled: !configData,
-          children: [
-            modelLabel ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.modelBtnLabel, children: modelLabel }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.modelBtnLoading, children: "…" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDownIcon, {})
-          ]
-        }
-      )
-    ] }),
-    modelPickerOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(ModelPickerModal, { onClose: () => setModelPickerOpen(false) })
-  ] });
+            i
+          );
+        }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputBox, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "textarea",
+            {
+              ref: textareaRef,
+              className: styles$5.textarea,
+              value: text2,
+              onChange: handleChange,
+              onKeyDown: handleKeyDown,
+              onPaste: handlePaste,
+              placeholder: t2("agent.placeholder"),
+              rows: 2,
+              disabled: isStreaming && text2 === ""
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.inputBoxRow, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.attachBtn, title: t2("agent.attach"), onClick: async () => {
+              const files = await window.devtool.agent.pickFile();
+              if (files.length > 0) setAttachments((prev) => [...prev, ...files]);
+            }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PlusIcon, {}) }),
+            isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.stopBtn, onClick: abortStreaming, title: t2("agent.stopGen"), children: /* @__PURE__ */ jsxRuntimeExports.jsx(StopIcon, {}) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: styles$5.sendBtn,
+                onClick: handleSend,
+                disabled: !text2.trim() || serverStatus !== "ready",
+                title: t2("agent.send"),
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowUpIcon, {})
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.toolbar, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.modeDropWrap, ref: modeDropRef, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: styles$5.modeDropBtn, onClick: () => setModeDropOpen((v2) => !v2), children: [
+              mode2 === "build" ? "Build" : "Plan",
+              /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDownIcon, {})
+            ] }),
+            modeDropOpen && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.modeDropList, children: ["build", "plan"].map((m) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `${styles$5.modeDropItem} ${mode2 === m ? styles$5.modeDropItemActive : ""}`,
+                onClick: () => {
+                  setMode(m);
+                  setModeDropOpen(false);
+                },
+                children: m === "build" ? "Build" : "Plan"
+              },
+              m
+            )) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: styles$5.modelBtn,
+              onClick: () => setModelPickerOpen(true),
+              title: t2("agent.switchModel"),
+              disabled: !configData,
+              children: [
+                modelLabel ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.modelBtnLabel, children: modelLabel }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.modelBtnLoading, children: "…" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDownIcon, {})
+              ]
+            }
+          )
+        ] }),
+        modelPickerOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(ModelPickerModal, { onClose: () => setModelPickerOpen(false) }),
+        previewImage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.imagePreview, onClick: () => setPreviewImage(null), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: styles$5.imagePreviewClose, onClick: () => setPreviewImage(null), children: "×" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: styles$5.imagePreviewImg, src: previewImage, alt: "preview", onClick: (e) => e.stopPropagation() })
+        ] })
+      ]
+    }
+  );
 }
 function ArrowUpIcon() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11.5V2.5M3 6l4-4 4 4", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) });
@@ -48103,29 +52089,192 @@ function AgentPanel({ visible: visible2 }) {
     }
   );
 }
-const root$2 = "_root_1iao1_1";
-const body = "_body_1iao1_15";
-const content = "_content_1iao1_27";
-const tabContent = "_tabContent_1iao1_43";
+const branchedSessionsByProject = /* @__PURE__ */ new Map();
+const recentCommits = /* @__PURE__ */ new Map();
+const DEDUP_WINDOW_MS = 5e3;
+function getBranchedSessions(projectDir) {
+  let s = branchedSessionsByProject.get(projectDir);
+  if (!s) {
+    s = /* @__PURE__ */ new Set();
+    branchedSessionsByProject.set(projectDir, s);
+  }
+  return s;
+}
+function truncate(text2, maxLen = 50) {
+  if (text2.length <= maxLen) return text2;
+  return text2.slice(0, maxLen - 1) + "…";
+}
+async function ensureSessionBranch(projectDir, sessionId) {
+  const branchedSessions = getBranchedSessions(projectDir);
+  if (branchedSessions.has(sessionId)) return;
+  branchedSessions.add(sessionId);
+  try {
+    await window.devtool.git.init(projectDir);
+    const branchName = `task-${sessionId.slice(0, 8)}`;
+    const branches = await window.devtool.git.listBranches(projectDir);
+    if (!branches.some((b) => b.name === branchName)) {
+      await window.devtool.git.createBranch(projectDir, branchName);
+    }
+    useGitStore.getState().fullRefresh(projectDir);
+  } catch {
+  }
+}
+function useAutoCommit() {
+  const projectDir = usePackageStore((s) => s.current?.dir);
+  const sessions = useAgentStore((s) => s.sessions);
+  reactExports.useEffect(() => {
+    if (!projectDir) return;
+    for (const s of sessions) {
+      ensureSessionBranch(projectDir, s.id);
+    }
+  }, [projectDir, sessions]);
+  const prevStreamingRef = reactExports.useRef({});
+  reactExports.useEffect(() => {
+    if (!projectDir) return;
+    const unsub = useAgentStore.subscribe((state) => {
+      for (const [sessionId, msgs] of Object.entries(state.messages)) {
+        const wasStreaming = prevStreamingRef.current[sessionId] ?? false;
+        const isStreaming = msgs.some((m) => m.isStreaming);
+        prevStreamingRef.current[sessionId] = isStreaming;
+        if (wasStreaming && !isStreaming) {
+          const lastCommit = recentCommits.get(sessionId) ?? 0;
+          if (Date.now() - lastCommit < DEDUP_WINDOW_MS) continue;
+          recentCommits.set(sessionId, Date.now());
+          const userMsgs = msgs.filter((m) => m.role === "user");
+          const lastUser = userMsgs[userMsgs.length - 1];
+          if (!lastUser) continue;
+          const textPart = lastUser.contentParts.find((p) => p.kind === "text");
+          if (!textPart) continue;
+          const query = textPart.text;
+          const summary = truncate(query);
+          setTimeout(async () => {
+            try {
+              const result = await window.devtool.git.autoCommit(projectDir, sessionId, summary);
+              if (result) {
+                useGitStore.getState().fullRefresh(projectDir);
+              }
+            } catch {
+            }
+          }, 1500);
+        }
+      }
+    });
+    return () => {
+      unsub();
+    };
+  }, [projectDir]);
+  reactExports.useEffect(() => {
+    if (branchedSessionsByProject.size > 20) {
+      const entries = [...branchedSessionsByProject.entries()];
+      for (const [key] of entries.slice(0, entries.length - 10)) {
+        branchedSessionsByProject.delete(key);
+      }
+    }
+    const now = Date.now();
+    for (const [key, ts2] of recentCommits) {
+      if (now - ts2 > 6e4) recentCommits.delete(key);
+    }
+  }, [projectDir]);
+}
+const root$2 = "_root_3kjcj_1";
+const body = "_body_3kjcj_15";
+const content = "_content_3kjcj_29";
+const previewArea = "_previewArea_3kjcj_47";
+const tabContent = "_tabContent_3kjcj_61";
+const tabContentCollapsed = "_tabContentCollapsed_3kjcj_75";
+const leftResizeHandle = "_leftResizeHandle_3kjcj_91";
+const bottomResizeHandle = "_bottomResizeHandle_3kjcj_115";
 const styles$3 = {
   root: root$2,
   body,
   content,
-  tabContent
+  previewArea,
+  tabContent,
+  tabContentCollapsed,
+  leftResizeHandle,
+  bottomResizeHandle
 };
-const TAB_IDS = ["preview", "log", "db"];
+const TAB_IDS = ["preview", "issues", "log", "db"];
 function MainLayout() {
   const t2 = useT();
   const [activeTab, setActiveTab] = reactExports.useState("preview");
   const [settingsOpen, setSettingsOpen] = reactExports.useState(false);
   const [aboutOpen, setAboutOpen] = reactExports.useState(false);
-  const [sidebarVisible, setSidebarVisible] = reactExports.useState(true);
+  const [bottomCollapsed, setBottomCollapsed] = reactExports.useState(true);
+  const [leftWidth, setLeftWidth] = reactExports.useState(290);
+  const [bottomHeight, setBottomHeight] = reactExports.useState(200);
+  const leftDragging = reactExports.useRef(false);
+  const leftStartX = reactExports.useRef(0);
+  const leftStartW = reactExports.useRef(0);
+  const onLeftMouseDown = reactExports.useCallback((e) => {
+    e.preventDefault();
+    leftDragging.current = true;
+    leftStartX.current = e.clientX;
+    leftStartW.current = leftWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, [leftWidth]);
+  reactExports.useEffect(() => {
+    const onMove = (e) => {
+      if (!leftDragging.current) return;
+      const delta = e.clientX - leftStartX.current;
+      setLeftWidth(Math.max(200, leftStartW.current + delta));
+    };
+    const onUp = () => {
+      if (!leftDragging.current) return;
+      leftDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+  const bottomDragging = reactExports.useRef(false);
+  const bottomStartY = reactExports.useRef(0);
+  const bottomStartH = reactExports.useRef(0);
+  const onBottomMouseDown = reactExports.useCallback((e) => {
+    e.preventDefault();
+    bottomDragging.current = true;
+    bottomStartY.current = e.clientY;
+    bottomStartH.current = bottomHeight;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }, [bottomHeight]);
+  reactExports.useEffect(() => {
+    const onMove = (e) => {
+      if (!bottomDragging.current) return;
+      const delta = bottomStartY.current - e.clientY;
+      const newH = Math.max(80, Math.min(600, bottomStartH.current + delta));
+      setBottomHeight(newH);
+      if (newH <= 80) setBottomCollapsed(true);
+      else if (bottomCollapsed && newH > 80) setBottomCollapsed(false);
+    };
+    const onUp = () => {
+      if (!bottomDragging.current) return;
+      bottomDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [bottomCollapsed]);
   const setCurrent = usePackageStore((s) => s.setCurrent);
   const setRecentFolders = usePackageStore((s) => s.setRecentFolders);
   const current = usePackageStore((s) => s.current);
   const agentPanelVisible = useAgentStore((s) => s.panelVisible);
   const toggleAgentPanel = useAgentStore((s) => s.togglePanel);
   const showToast = useToastStore((s) => s.show);
+  const logErrorCount = useLogStore((s) => s.entries.filter((e) => "level" in e && e.level === "error").length);
+  const issueCount = usePackageStore((s) => s.current?.warnings?.length ?? 0);
+  useAutoCommit();
   const handleReload = reactExports.useCallback(async () => {
     if (!current) return;
     try {
@@ -48159,27 +52308,37 @@ function MainLayout() {
         onOpenSettings: () => setSettingsOpen(true),
         onOpenAbout: () => setAboutOpen(true),
         onBuild: handleBuild,
-        sidebarVisible,
-        onToggleSidebar: () => setSidebarVisible((v2) => !v2),
         agentPanelVisible,
         onToggleAgentPanel: toggleAgentPanel
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$3.body, children: [
-      sidebarVisible && /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(LeftPanel, { width: leftWidth }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$3.leftResizeHandle, onMouseDown: onLeftMouseDown }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$3.content, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$3.previewArea, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PreviewTab, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$3.bottomResizeHandle, onMouseDown: onBottomMouseDown }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           TabBar,
           {
-            tabs: TAB_IDS.map((id) => ({ id, label: t2(`tabs.${id}`) })),
+            tabs: TAB_IDS.filter((id) => id !== "preview").map((id) => ({
+              id,
+              label: t2(`tabs.${id}`),
+              badge: id === "issues" ? issueCount : id === "log" ? logErrorCount : void 0
+            })),
             activeTab,
-            onTabChange: (id) => setActiveTab(id)
+            onTabChange: (id) => {
+              setActiveTab(id);
+              setBottomCollapsed(false);
+            },
+            collapsed: bottomCollapsed,
+            onToggleCollapse: () => setBottomCollapsed((v2) => !v2)
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$3.tabContent, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "preview" ? "flex" : "none", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PreviewTab, {}) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "log" ? "flex" : "none", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(LogTab, {}) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "db" ? "flex" : "none", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(DbTab, {}) })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: bottomCollapsed ? styles$3.tabContentCollapsed : styles$3.tabContent, style: { height: bottomCollapsed ? 0 : bottomHeight }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "issues" ? "flex" : "none", width: "100%", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(IssuesTab, {}) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "log" ? "flex" : "none", width: "100%", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(LogTab, {}) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: activeTab === "db" ? "flex" : "none", width: "100%", height: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(DbTab, {}) })
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(AgentPanel, { visible: agentPanelVisible })
@@ -48350,6 +52509,7 @@ function App() {
   const t2 = useT();
   const current = usePackageStore((s) => s.current);
   usePackageStore((s) => s.setCurrent);
+  const setWarnings = usePackageStore((s) => s.setWarnings);
   const setRecentFolders = usePackageStore((s) => s.setRecentFolders);
   const appendLog = useLogStore((s) => s.append);
   const setExecStatus = useExecutionStore((s) => s.setStatus);
@@ -48377,6 +52537,10 @@ function App() {
     });
     return unsub;
   }, [current, appendLog]);
+  reactExports.useEffect(() => {
+    if (!current) return;
+    return window.devtool.package.onWarningsChanged(setWarnings);
+  }, [current, setWarnings]);
   const isInitialMount = reactExports.useRef(true);
   reactExports.useEffect(() => {
     if (isInitialMount.current) {

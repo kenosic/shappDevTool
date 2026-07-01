@@ -11,6 +11,7 @@ export default function AgentInput() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modeDropOpen, setModeDropOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const isStreaming = useAgentStore((s) => s.isStreaming);
   const sendMessage = useAgentStore((s) => s.sendMessage);
   const abortStreaming = useAgentStore((s) => s.abortStreaming);
@@ -63,6 +64,87 @@ export default function AgentInput() {
     }
   };
 
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageItems: DataTransferItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        imageItems.push(item);
+      }
+    }
+
+    if (imageItems.length === 0) return; // No images, let default paste handle text
+
+    e.preventDefault(); // Stop default paste so we don't insert the image blob URL
+
+    const newAttachments: FileAttachment[] = [];
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.type.split("/")[1] ?? "png";
+      const name = file.name || `paste-${Date.now()}.${ext}`;
+      newAttachments.push({ name, mime: file.type, url: dataUrl });
+    }
+
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
+
+  // ── Drag & drop files ──
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer?.types?.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only reset when leaving the wrapper (not entering a child)
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles || droppedFiles.length === 0) return;
+
+    const newAttachments: FileAttachment[] = [];
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.type.split("/")[1] || file.name.split(".").pop() || "bin";
+      const name = file.name || `drop-${Date.now()}.${ext}`;
+      newAttachments.push({ name, mime: file.type || "application/octet-stream", url: dataUrl });
+    }
+
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
+
   // Close mode dropdown on outside click
   useEffect(() => {
     if (!modeDropOpen) return;
@@ -75,19 +157,32 @@ export default function AgentInput() {
   }, [modeDropOpen]);
 
   return (
-    <div className={styles.inputArea}>
+    <div
+      className={`${styles.inputArea} ${isDragOver ? styles.inputAreaDragOver : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {attachments.length > 0 && (
         <div className={styles.attachList}>
-          {attachments.map((f, i) => (
-            <span key={i} className={styles.attachChip}>
-              <span className={styles.attachChipName}>{f.name}</span>
-              <button
-                className={styles.attachChipRemove}
-                onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                title={t("common.remove")}
-              >×</button>
-            </span>
-          ))}
+          {attachments.map((f, i) => {
+            const isImage = f.mime.startsWith("image/");
+            return (
+              <span
+                key={i}
+                className={`${styles.attachChip} ${isImage ? styles.attachChipImage : ""}`}
+                {...(isImage ? { tabIndex: 0, role: "button", onClick: () => setPreviewImage(f.url), onKeyDown: (e) => { if (e.key === "Enter") setPreviewImage(f.url); } } : {})}
+              >
+                {isImage && <img className={styles.attachChipThumb} src={f.url} alt={f.name} />}
+                <span className={styles.attachChipName}>{f.name}</span>
+                <button
+                  className={styles.attachChipRemove}
+                  onClick={(e) => { e.stopPropagation(); setAttachments((prev) => prev.filter((_, j) => j !== i)); }}
+                  title={t("common.remove")}
+                >×</button>
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -99,6 +194,7 @@ export default function AgentInput() {
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={t("agent.placeholder")}
           rows={2}
           disabled={isStreaming && text === ""}
@@ -166,6 +262,14 @@ export default function AgentInput() {
 
       {modelPickerOpen && (
         <ModelPickerModal onClose={() => setModelPickerOpen(false)} />
+      )}
+
+      {/* Image preview overlay */}
+      {previewImage && (
+        <div className={styles.imagePreview} onClick={() => setPreviewImage(null)}>
+          <button className={styles.imagePreviewClose} onClick={() => setPreviewImage(null)}>×</button>
+          <img className={styles.imagePreviewImg} src={previewImage} alt="preview" onClick={(e) => e.stopPropagation()} />
+        </div>
       )}
     </div>
   );
